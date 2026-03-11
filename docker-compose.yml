@@ -5,18 +5,19 @@ services:
     build: .
     container_name: class-schedule
     ports:
-      - "30080:3000"
+      - "${HOST_PORT:-30080}:3000"
     volumes:
       - ./data:/data
       - ./logs:/data/logs
     environment:
+      - NODE_ENV=production
       - CLASS_NAME=${CLASS_NAME:-计算机1班}
       - CLASS_DESC=${CLASS_DESC:-2024年春季学期}
-      # 留空则自动生成随机6位数字密码
       - EDIT_PASSWORD=${EDIT_PASSWORD:-}
       - SEMESTER_START=${SEMESTER_START:-2024-03-01}
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
+      - PUBLIC_PATH=/app/public
     restart: unless-stopped
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0

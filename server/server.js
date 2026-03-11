@@ -30,7 +30,6 @@ async function logToFile(message) {
 // Config
 const CLASS_NAME = process.env.CLASS_NAME || '我的课表';
 const CLASS_DESC = process.env.CLASS_DESC || '';
-// 如果没有设置密码，自动生成一个
 const EDIT_PASSWORD = process.env.EDIT_PASSWORD || generatePassword();
 const SEMESTER_START = process.env.SEMESTER_START || `${new Date().getFullYear()}-03-01`;
 
@@ -48,7 +47,10 @@ const defaultSchedule = {
 };
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../public')));
+
+// 静态文件路径 - 支持两种部署方式
+const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, '../public');
+app.use(express.static(publicPath));
 
 // 请求日志中间件
 app.use(async (req, res, next) => {
@@ -150,7 +152,6 @@ app.post('/api/import', async (req, res) => {
   } catch { res.status(500).json({error:'Import failed'}); }
 });
 
-// 获取日志列表
 app.get('/api/logs', async (req, res) => {
   try {
     await fs.mkdir(LOG_DIR, { recursive: true });
@@ -160,7 +161,6 @@ app.get('/api/logs', async (req, res) => {
   } catch { res.status(500).json({error:'Failed to read logs'}); }
 });
 
-// 查看指定日志
 app.get('/api/logs/:file', async (req, res) => {
   try {
     const file = req.params.file;
@@ -172,7 +172,10 @@ app.get('/api/logs/:file', async (req, res) => {
   } catch { res.status(404).json({error:'Log not found'}); }
 });
 
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../public/index.html')));
+// SPA fallback - 使用 PUBLIC_PATH
+app.get('*', (req, res) => {
+  res.sendFile(path.join(publicPath, 'index.html'));
+});
 
 async function init() {
   try {
@@ -192,13 +195,12 @@ init().then(() => {
 访问地址: http://localhost:${PORT}
 数据文件: ${DATA_FILE}
 日志目录: ${LOG_DIR}
+静态文件: ${publicPath}
 ----------------------------------------
 ${EDIT_PASSWORD ? `🔒 编辑密码: ${EDIT_PASSWORD}` : '🔓 编辑模式: 无需密码'}
 ========================================
     `;
     console.log(banner);
-    
-    // 记录启动日志
     logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码: ${EDIT_PASSWORD || '无'}`);
   });
 });
