@@ -134,7 +134,36 @@ server {
         proxy_pass http://localhost:30080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
+}
+```
+
+### HTTPS 配置（SSL）
+
+使用 Let's Encrypt 证书：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name schedule.yourdomain.com;
+
+    ssl_certificate /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:30080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+# HTTP 跳转 HTTPS
+server {
+    listen 80;
+    server_name schedule.yourdomain.com;
+    return 301 https://$server_name$request_uri;
 }
 ```
 
@@ -154,6 +183,73 @@ firewall-cmd --reload
 ```bash
 # 自动备份脚本（添加到 crontab）
 0 2 * * * cd /opt/class-schedule && cp data/schedule.json backups/schedule-$(date +\%Y\%m\%d).json
+```
+
+## 常见问题
+
+### Q1: 静态文件返回 404
+
+**现象：** 页面空白，控制台显示 `Error: ENOENT: no such file or directory`
+
+**解决：**
+- 确保 `Dockerfile` 中正确复制了 `public/` 目录
+- 检查 `PUBLIC_PATH` 环境变量是否正确设置（默认为 `/app/public`）
+- 重新构建镜像：`docker-compose up -d --build`
+
+### Q2: 数据无法保存
+
+**现象：** 刷新页面后数据丢失
+
+**解决：**
+- 检查 Docker 卷挂载是否正确：`-v ./data:/data`
+- 确保宿主机目录有写入权限：`chmod 755 ./data`
+- 查看日志确认错误：`docker logs class-schedule`
+
+### Q3: Nginx 反向代理后无法访问
+
+**现象：** 502 Bad Gateway
+
+**解决：**
+- 确认容器正在运行：`docker ps`
+- 检查端口映射是否正确：`ports: - "30080:3000"`
+- 确认 Nginx 配置的 upstream 端口正确
+
+### Q4: 如何修改密码
+
+编辑 `docker-compose.yml` 中的 `EDIT_PASSWORD`，然后重启：
+
+```bash
+docker-compose restart
+```
+
+或直接查看当前密码：
+
+```bash
+# 查看启动日志中的密码
+docker logs class-schedule | grep "编辑密码"
+
+# 或查看密码文件
+cat /opt/class-schedule/.password
+```
+
+### Q5: 如何更新代码
+
+```bash
+cd /opt/class-schedule
+git pull origin master
+docker-compose up -d --build
+```
+
+### Q6: 日志文件在哪里
+
+日志保存在 `logs/` 目录，按天归档：
+
+```bash
+# 查看日志列表
+ls -la logs/
+
+# 查看今天的日志
+cat logs/schedule-$(date +%Y-%m-%d).log
 ```
 
 ## 故障排查
