@@ -3,7 +3,7 @@
 简洁美观的班级课表管理系统，支持课程编辑、周次管理、数据导入导出等功能。
 
 [![Docker](https://img.shields.io/badge/Docker-支持-blue)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
 ## ✨ 功能特性
 
@@ -147,4 +147,4 @@ schedule-web/
 
 ## 📄 许可证
 
-MIT License © 2024
+[AGPL-3.0](LICENSE) © 2024 yang12535
