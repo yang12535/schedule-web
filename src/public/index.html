@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>班级课表</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style>
+    :root {
+      --primary: #4A90D9;
+      --primary-light: #E8F4FD;
+      --gray-50: #F8F9FA;
+      --gray-100: #F1F3F4;
+      --gray-200: #E8EAED;
+      --gray-400: #9AA0A6;
+      --gray-600: #5F6368;
+      --gray-900: #202124;
+      --coral: #FF6B6B;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; background: var(--gray-50); }
+    
+    .container { max-width: 600px; margin: 0 auto; min-height: 100vh; }
+    .header { background: white; padding: 16px 20px; border-bottom: 1px solid var(--gray-200); position: sticky; top: 0; z-index: 100; }
+    .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .header-title { font-size: 20px; font-weight: 700; color: var(--gray-900); }
+    .header-desc { font-size: 13px; color: var(--gray-600); margin-top: 2px; }
+    
+    .mode-badge { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; background: var(--primary-light); color: var(--primary); }
+    .mode-badge.edit { background: #FEE2E2; color: #DC2626; }
+    
+    .week-nav { display: flex; align-items: center; gap: 8px; }
+    .week-btn { width: 28px; height: 28px; border: none; background: var(--gray-100); border-radius: 50%; cursor: pointer; color: var(--gray-600); }
+    .week-badge { background: var(--primary-light); color: var(--primary); padding: 6px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; }
+    
+    .toolbar { background: white; padding: 12px 20px; border-bottom: 1px solid var(--gray-200); display: flex; gap: 10px; overflow-x: auto; }
+    .toolbar-btn { padding: 8px 16px; border: 1px solid var(--gray-200); background: white; border-radius: 20px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .toolbar-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+    .toolbar-btn.danger { background: #FEE2E2; color: #DC2626; border-color: #FECACA; }
+    
+    .day-tabs { display: flex; gap: 8px; padding: 12px 16px; background: white; border-bottom: 1px solid var(--gray-200); overflow-x: auto; }
+    .day-tab { width: 64px; height: 56px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; border: none; background: transparent; }
+    .day-tab.active { background: var(--primary); color: white; }
+    .day-tab .day-label { font-size: 12px; margin-bottom: 2px; }
+    .day-tab .day-number { font-size: 16px; font-weight: 700; }
+    
+    .content { padding: 16px; padding-bottom: 200px; }
+    
+    .add-btn { width: 100%; padding: 16px; border: 2px dashed var(--gray-200); border-radius: 12px; background: white; color: var(--gray-600); cursor: pointer; margin-bottom: 12px; }
+    .add-btn:hover { border-color: var(--primary); color: var(--primary); }
+    
+    .course-item { display: flex; margin-bottom: 12px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .course-item.current { box-shadow: 0 0 0 2px var(--coral); }
+    .course-time { width: 72px; padding: 16px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--gray-50); border-right: 1px solid var(--gray-200); }
+    .course-time .period { font-size: 11px; color: var(--gray-400); }
+    .course-time .time { font-size: 12px; font-weight: 600; color: var(--gray-600); }
+    .course-info { flex: 1; padding: 14px 16px; position: relative; border-left: 4px solid var(--gray-400); }
+    .course-info[data-type="database"] { border-color: #4A90D9; background: #E3F2FD; }
+    .course-info[data-type="english"] { border-color: #FF9800; background: #FFF3E0; }
+    .course-info[data-type="security"] { border-color: #4CAF50; background: #E8F5E9; }
+    .course-info[data-type="politics"] { border-color: #9C27B0; background: #F3E5F5; }
+    .course-info[data-type="linux"] { border-color: #00BCD4; background: #E0F7FA; }
+    .course-name { font-size: 16px; font-weight: 600; color: var(--gray-900); margin-bottom: 6px; }
+    .course-meta { font-size: 13px; color: var(--gray-600); }
+    .course-weeks { font-size: 11px; color: var(--gray-400); margin-top: 4px; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 10px; display: inline-block; }
+    .course-actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; }
+    .course-actions button { width: 32px; height: 32px; border: none; border-radius: 8px; background: var(--gray-100); cursor: pointer; }
+    
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--gray-600); }
+    .empty-state-icon { width: 80px; height: 80px; background: var(--gray-100); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 36px; }
+    .loading { text-align: center; padding: 60px; color: var(--gray-600); }
+    
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+    .modal-overlay.active { opacity: 1; visibility: visible; }
+    .modal { background: white; border-radius: 16px; width: 90%; max-width: 480px; max-height: 90vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; }
+    .modal-overlay.active .modal { transform: scale(1); }
+    .modal-header { padding: 20px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; }
+    .modal-title { font-size: 18px; font-weight: 700; }
+    .modal-close { width: 32px; height: 32px; border: none; background: var(--gray-100); border-radius: 50%; cursor: pointer; }
+    .modal-body { padding: 20px; }
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 14px; font-weight: 500; color: var(--gray-600); margin-bottom: 6px; }
+    .form-input, .form-select { width: 100%; padding: 12px 16px; border: 1px solid var(--gray-200); border-radius: 10px; font-size: 15px; }
+    .form-input:focus, .form-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .color-options { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 8px; }
+    .color-option { width: 36px; height: 36px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; }
+    .color-option.selected { border-color: var(--gray-900); }
+    .modal-footer { padding: 16px 20px; border-top: 1px solid var(--gray-200); display: flex; gap: 12px; }
+    .btn { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .btn-secondary { background: var(--gray-100); color: var(--gray-600); }
+    .btn-primary { background: var(--primary); color: white; }
+    
+    .toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--gray-900); color: white; padding: 12px 24px; border-radius: 24px; font-size: 14px; z-index: 2000; opacity: 0; transition: all 0.3s; }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .toast.success { background: #10B981; }
+    .toast.error { background: #DC2626; }
+    
+    .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: white; border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
+    .next-course.no-class { border-color: var(--gray-400); }
+    .next-course-title { font-size: 14px; color: var(--coral); font-weight: 600; margin-bottom: 8px; }
+    .next-course.no-class .next-course-title { color: var(--gray-400); }
+    .next-course-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .next-course-info { font-size: 13px; color: var(--gray-600); }
+    
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    
+    .period-setting { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .period-setting label { width: 50px; font-size: 13px; color: var(--gray-600); }
+    .period-setting input { padding: 8px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-top">
+        <div>
+          <div class="header-title" id="className">加载中...</div>
+          <div class="header-desc" id="classDesc"></div>
+        </div>
+        <button class="mode-badge" id="modeBtn" onclick="toggleMode()">👀 查看</button>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="week-nav">
+          <button class="week-btn" onclick="changeWeek(-1)">&lt;</button>
+          <span class="week-badge" id="weekDisplay">第1周</span>
+          <button class="week-btn" onclick="changeWeek(1)">&gt;</button>
+        </div>
+        <div style="font-size: 12px; color: var(--gray-400);" id="currentDate"></div>
+      </div>
+    </div>
+
+    <div class="toolbar hide-scrollbar" id="toolbar" style="display: none;">
+      <button class="toolbar-btn primary" onclick="openModal()">+ 添加</button>
+      <button class="toolbar-btn" onclick="saveChanges()">💾 保存</button>
+      <button class="toolbar-btn" onclick="openSettingsModal()">⚙️ 设置</button>
+      <button class="toolbar-btn" onclick="document.getElementById('fileInput').click()">📥 导入</button>
+      <button class="toolbar-btn" onclick="exportData()">📤 导出</button>
+      <button class="toolbar-btn danger" onclick="clearAll()">🗑️ 清空</button>
+    </div>
+
+    <div class="day-tabs hide-scrollbar" id="dayTabs">
+      <button class="day-tab active" data-day="monday"><span class="day-label">周一</span><span class="day-number">--</span></button>
+      <button class="day-tab" data-day="tuesday"><span class="day-label">周二</span><span class="day-number">--</span></button>
+      <button class="day-tab" data-day="wednesday"><span class="day-label">周三</span><span class="day-number">--</span></button>
+      <button class="day-tab" data-day="thursday"><span class="day-label">周四</span><span class="day-number">--</span></button>
+      <button class="day-tab" data-day="friday"><span class="day-label">周五</span><span class="day-number">--</span></button>
+    </div>
+
+    <div class="content" id="scheduleContent">
+      <div class="loading">加载中...</div>
+    </div>
+  </div>
+
+  <!-- Course Modal -->
+  <div class="modal-overlay" id="courseModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTitle">添加课程</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="courseId">
+        <div class="form-group">
+          <label class="form-label">课程名称 *</label>
+          <input type="text" class="form-input" id="courseName" placeholder="例如：高等数学">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">星期</label>
+            <select class="form-select" id="courseDay">
+              <option value="monday">周一</option>
+              <option value="tuesday">周二</option>
+              <option value="wednesday">周三</option>
+              <option value="thursday">周四</option>
+              <option value="friday">周五</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">节次</label>
+            <input type="text" class="form-input" id="coursePeriod" placeholder="例如：1-2">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">周次范围</label>
+          <div class="form-row-3">
+            <select class="form-select" id="courseStartWeek"></select>
+            <select class="form-select" id="courseEndWeek"></select>
+            <select class="form-select" id="courseWeekType">
+              <option value="all">全部</option>
+              <option value="odd">单周</option>
+              <option value="even">双周</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">上课地点</label>
+          <input type="text" class="form-input" id="courseLocation" placeholder="例如：教学楼A301">
+        </div>
+        <div class="form-group">
+          <label class="form-label">任课教师</label>
+          <input type="text" class="form-input" id="courseTeacher" placeholder="例如：张老师">
+        </div>
+        <div class="form-group">
+          <label class="form-label">颜色标记</label>
+          <div class="color-options" id="colorOptions">
+            <div class="color-option selected" data-type="" style="background: #F5F5F5;"></div>
+            <div class="color-option" data-type="database" style="background: #E3F2FD;"></div>
+            <div class="color-option" data-type="english" style="background: #FFF3E0;"></div>
+            <div class="color-option" data-type="security" style="background: #E8F5E9;"></div>
+            <div class="color-option" data-type="politics" style="background: #F3E5F5;"></div>
+            <div class="color-option" data-type="linux" style="background: #E0F7FA;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveCourse()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">⚙️ 设置</h3>
+        <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">班级名称</label>
+          <input type="text" class="form-input" id="settingClassName">
+        </div>
+        <div class="form-group">
+          <label class="form-label">学期描述</label>
+          <input type="text" class="form-input" id="settingClassDesc">
+        </div>
+        <div class="form-group">
+          <label class="form-label">学期开始日期</label>
+          <input type="date" class="form-input" id="settingSemesterStart">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">总周数</label>
+            <input type="number" class="form-input" id="settingTotalWeeks" value="16" min="1" max="30">
+          </div>
+          <div class="form-group">
+            <label class="form-label">总节数</label>
+            <input type="number" class="form-input" id="settingTotalPeriods" value="12" min="1" max="20" onchange="initPeriodSettings()">
+          </div>
+        </div>
+        <div id="periodSettingsContainer"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeSettingsModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveSettings()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Password Modal -->
+  <div class="modal-overlay" id="passwordModal">
+    <div class="modal">
+      <div class="modal-header"><h3 class="modal-title">🔒 需要密码</h3></div>
+      <div class="modal-body" style="text-align: center;">
+        <p style="color: var(--gray-600); margin-bottom: 16px;">请输入编辑密码</p>
+        <input type="text" inputmode="numeric" pattern="[0-9]*" id="passwordInput" placeholder="输入密码" style="width: 100%; padding: 12px; border: 2px solid #4A90D9; border-radius: 8px; font-size: 18px; text-align: center; -moz-appearance: textfield;">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closePasswordModal()">取消</button>
+        <button class="btn btn-primary" onclick="verifyPassword()">进入编辑</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="fileInput" style="display: none;" accept=".json" onchange="importData(this)">
+  <div class="toast" id="toast"></div>
+
+  <div class="next-course" id="nextCourse">
+    <div class="next-course-title">⏰ 下一节课</div>
+    <div id="nextCourseContent">
+      <div class="next-course-name">--</div>
+      <div class="next-course-info">--</div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let schedule = null, isEditMode = false, currentDay = 'monday', currentWeekOffset = 0, editingCourseId = null, editPassword = '';
+    let totalPeriods = 12, totalWeeks = 16;
+    const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
+    const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
+    let periodSettings = [...defaultPeriods];
+
+    async function init() {
+      await loadSchedule();
+      initWeekOptions();
+      initPeriodSettings();
+      updateDate();
+      setCurrentDayByDate();
+      setupListeners();
+      updateNextCourse();
+      setInterval(() => { renderSchedule(); updateNextCourse(); }, 60000);
+    }
+
+    async function loadSchedule() {
+      try {
+        const res = await fetch('/api/schedule');
+        schedule = await res.json();
+        if (schedule.periodSettings?.length) periodSettings = schedule.periodSettings;
+        if (schedule.totalPeriods) totalPeriods = schedule.totalPeriods;
+        if (schedule.totalWeeks) totalWeeks = schedule.totalWeeks;
+        document.getElementById('className').textContent = schedule.name;
+        document.getElementById('classDesc').textContent = schedule.description || '点击右上角切换编辑模式';
+        document.title = schedule.name;
+        updateWeekDisplay();
+        renderSchedule();
+      } catch { document.getElementById('scheduleContent').innerHTML = '<div class="empty-state">加载失败</div>'; }
+    }
+
+    function initWeekOptions() {
+      const start = document.getElementById('courseStartWeek'), end = document.getElementById('courseEndWeek');
+      start.innerHTML = end.innerHTML = '';
+      for (let i = 1; i <= totalWeeks; i++) {
+        start.add(new Option(`第${i}周起`, i));
+        end.add(new Option(`到第${i}周`, i));
+      }
+      start.value = 1; end.value = totalWeeks;
+    }
+
+    function initPeriodSettings() {
+      const container = document.getElementById('periodSettingsContainer'), count = +document.getElementById('settingTotalPeriods')?.value || totalPeriods;
+      totalPeriods = count;
+      while (periodSettings.length < count) {
+        const last = periodSettings[periodSettings.length - 1];
+        const [h, m] = last.startTime.split(':'); 
+        const totalMin = +h * 60 + +m + last.duration + 10;
+        periodSettings.push({startTime: `${String(Math.floor(totalMin/60)).padStart(2,'0')}:${String(totalMin%60).padStart(2,'0')}`, duration: 45});
+      }
+      container.innerHTML = periodSettings.slice(0, count).map((p, i) => `
+        <div class="period-setting">
+          <label>第${i+1}节</label>
+          <input type="time" id="periodTime${i}" value="${p.startTime}">
+          <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
+          <span style="font-size:12px;color:var(--gray-400);">分钟</span>
+        </div>
+      `).join('');
+    }
+
+    function setCurrentDayByDate() {
+      const dayMap = {1:'monday',2:'tuesday',3:'wednesday',4:'thursday',5:'friday'};
+      const today = dayMap[new Date().getDay()];
+      if (today) {
+        currentDay = today;
+        document.querySelectorAll('.day-tab').forEach(t => t.classList.toggle('active', t.dataset.day === currentDay));
+        renderSchedule();
+      }
+    }
+
+    function updateDate() { 
+      const d = new Date(), w = ['日','一','二','三','四','五','六']; 
+      document.getElementById('currentDate').textContent = `${d.getMonth()+1}月${d.getDate()}日 周${w[d.getDay()]}`; 
+    }
+
+    function getCurrentWeek() {
+      const diff = new Date() - new Date(schedule.semesterStart);
+      return Math.max(1, Math.floor(diff / 604800000) + 1);
+    }
+
+    function updateWeekDisplay() {
+      const week = getCurrentWeek() + currentWeekOffset;
+      document.getElementById('weekDisplay').textContent = `第${week}周`;
+      const start = new Date(schedule.semesterStart);
+      ['monday','tuesday','wednesday','thursday','friday'].forEach((day, i) => {
+        const date = new Date(start.getTime() + (week - 1) * 604800000 + i * 86400000);
+        document.querySelector(`[data-day="${day}"] .day-number`).textContent = `${date.getMonth()+1}/${date.getDate()}`;
+      });
+    }
+
+    function changeWeek(delta) { currentWeekOffset += delta; updateWeekDisplay(); renderSchedule(); updateNextCourse(); }
+
+    function parsePeriods(p) {
+      p = p.replace(/[第节]/g, '').trim();
+      if (p.includes('-')) { const [s,e]=p.split('-').map(Number); return Array.from({length:e-s+1},(_,i)=>s+i); }
+      if (p.includes(',')) return p.split(',').map(Number).filter(Boolean);
+      const n = +p; return n ? [n] : [];
+    }
+
+    function formatPeriod(p) {
+      const ps = parsePeriods(p);
+      return ps.length > 1 ? `第${ps[0]}-${ps.at(-1)}节` : `第${ps[0]}节`;
+    }
+
+    function getTimeText(p) {
+      const ps = parsePeriods(p);
+      if (!ps.length) return '';
+      const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
+      if (!first || !last) return '';
+      const end = (([h,m]) => { const t = +h*60 + +m + last.duration; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; })(last.startTime.split(':'));
+      return `${first.startTime}-${end}`;
+    }
+
+    function isCurrentCourse(c) {
+      if (currentWeekOffset !== 0) return false;
+      const now = new Date().getHours() * 60 + new Date().getMinutes();
+      const ps = parsePeriods(c.period);
+      const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
+      if (!first || !last) return false;
+      return now >= (+first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1]) && 
+             now < (+last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration);
+    }
+
+    function isActiveInWeek(c, week) {
+      const s = c.startWeek || 1, e = c.endWeek || 20, t = c.weekType || 'all';
+      if (week < s || week > e) return false;
+      return t === 'all' ? true : t === 'odd' ? week % 2 === 1 : week % 2 === 0;
+    }
+
+    function formatWeekRange(c) {
+      let t = `第${c.startWeek||1}-${c.endWeek||16}周`;
+      if (c.weekType === 'odd') t += '（单周）';
+      else if (c.weekType === 'even') t += '（双周）';
+      return t;
+    }
+
+    function renderSchedule() {
+      const container = document.getElementById('scheduleContent'), courses = schedule.courses[currentDay] || [];
+      let html = isEditMode ? `<button class="add-btn" onclick="openModal()">+ 添加${dayNames[currentDay]}课程</button>` : '';
+      if (!courses.length) {
+        html += `<div class="empty-state"><div class="empty-state-icon">📚</div><p>${isEditMode ? '暂无课程' : '今日无课'}</p></div>`;
+      } else {
+        const week = getCurrentWeek() + currentWeekOffset;
+        [...courses].sort((a,b) => (parsePeriods(a.period)[0]||0) - (parsePeriods(b.period)[0]||0)).forEach(c => {
+          if (!isActiveInWeek(c, week)) return;
+          const isCurrent = isCurrentCourse(c);
+          html += `
+            <div class="course-item ${isCurrent?'current':''}">
+              <div class="course-time"><span class="period">${formatPeriod(c.period)}</span><span class="time">${getTimeText(c.period)}</span></div>
+              <div class="course-info" data-type="${c.type||''}">
+                <div class="course-name">${c.name}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
+                <div class="course-meta">${c.location?`📍${c.location}`:''}${c.teacher?` | 👤${c.teacher}`:''}</div>
+                ${c.startWeek||c.endWeek?`<div class="course-weeks">${formatWeekRange(c)}</div>`:''}
+                ${isEditMode?`<div class="course-actions"><button onclick="editCourse('${c.id}')">✏️</button><button onclick="deleteCourse('${c.id}')">🗑️</button></div>`:''}
+              </div>
+            </div>`;
+        });
+      }
+      container.innerHTML = html;
+    }
+
+    function findNextCourse() {
+      const now = new Date(), week = getCurrentWeek() + currentWeekOffset, dayOrder = ['monday','tuesday','wednesday','thursday','friday'];
+      const courses = [];
+      dayOrder.forEach((day, i) => {
+        (schedule.courses[day] || []).forEach(c => {
+          if (!isActiveInWeek(c, week)) return;
+          const ps = parsePeriods(c.period);
+          const setting = periodSettings[ps[0]-1];
+          if (!setting) return;
+          const [h, m] = setting.startTime.split(':');
+          const time = new Date(now);
+          time.setDate(time.getDate() + (i + 1 - time.getDay()));
+          time.setHours(+h, +m, 0, 0);
+          if (time > now) courses.push({...c, dayName: dayNames[day], time});
+        });
+      });
+      return courses.sort((a,b) => a.time - b.time)[0] || null;
+    }
+
+    function updateNextCourse() {
+      const el = document.getElementById('nextCourse'), content = document.getElementById('nextCourseContent'), next = findNextCourse();
+      if (!next) {
+        el.classList.add('no-class');
+        content.innerHTML = '<div class="next-course-name">今日无课</div><div class="next-course-info">好好休息吧 🎉</div>';
+        return;
+      }
+      el.classList.remove('no-class');
+      const diff = next.time - new Date(), hours = Math.floor(diff/3600000), mins = Math.floor((diff%3600000)/60000);
+      const countdown = hours > 0 ? `还有${hours}小时${mins}分钟` : mins > 0 ? `还有${mins}分钟` : '即将开始';
+      content.innerHTML = `<div class="next-course-name">${next.name}</div><div class="next-course-info">${next.dayName} ${getTimeText(next.period)} | 📍${next.location||'暂无地点'}</div><div style="margin-top:8px;font-size:12px;color:#FF6B6B;font-weight:600;">${countdown}</div>`;
+    }
+
+    function setupListeners() {
+      document.querySelectorAll('.day-tab').forEach(t => t.onclick = () => { currentDay = t.dataset.day; document.querySelectorAll('.day-tab').forEach(x => x.classList.remove('active')); t.classList.add('active'); renderSchedule(); });
+      document.querySelectorAll('.color-option').forEach(o => o.onclick = () => { document.querySelectorAll('.color-option').forEach(x => x.classList.remove('selected')); o.classList.add('selected'); });
+      ['courseModal','settingsModal','passwordModal'].forEach(id => document.getElementById(id).onclick = e => { if(e.target.id === id) window['close'+id.replace('Modal','').replace('course','Course').replace('settings','Settings').replace('password','Password')+'Modal'](); });
+      const pwdInput = document.getElementById('passwordInput');
+      pwdInput.addEventListener('keypress', e => { if(e.key === 'Enter') verifyPassword(); });
+      // Firefox 数字输入修复
+      pwdInput.addEventListener('input', e => {
+        e.target.value = e.target.value.replace(/[^0-9]/g, '');
+      });
+    }
+
+    async function toggleMode() {
+      if (isEditMode) { isEditMode = false; updateModeUI(); renderSchedule(); }
+      else {
+        const res = await fetch('/api/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:''})});
+        const data = await res.json();
+        if (data.requirePassword) document.getElementById('passwordModal').classList.add('active');
+        else enableEditMode();
+      }
+    }
+
+    function enableEditMode() { isEditMode = true; updateModeUI(); renderSchedule(); showToast('已进入编辑模式', 'success'); }
+
+    function updateModeUI() {
+      const btn = document.getElementById('modeBtn'), toolbar = document.getElementById('toolbar');
+      btn.className = 'mode-badge ' + (isEditMode ? 'edit' : '');
+      btn.innerHTML = isEditMode ? '✏️ 编辑' : '👀 查看';
+      toolbar.style.display = isEditMode ? 'flex' : 'none';
+    }
+
+    function closePasswordModal() { document.getElementById('passwordModal').classList.remove('active'); document.getElementById('passwordInput').value = ''; }
+
+    async function verifyPassword() {
+      const password = document.getElementById('passwordInput').value;
+      const res = await fetch('/api/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+      const data = await res.json();
+      if (data.valid) { editPassword = password; closePasswordModal(); enableEditMode(); }
+      else showToast('密码错误', 'error');
+    }
+
+    function openSettingsModal() {
+      document.getElementById('settingClassName').value = schedule.name || '';
+      document.getElementById('settingClassDesc').value = schedule.description || '';
+      document.getElementById('settingSemesterStart').value = schedule.semesterStart || '';
+      document.getElementById('settingTotalPeriods').value = totalPeriods;
+      document.getElementById('settingTotalWeeks').value = totalWeeks;
+      initPeriodSettings();
+      document.getElementById('settingsModal').classList.add('active');
+    }
+
+    function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('active'); }
+
+    async function saveSettings() {
+      const name = document.getElementById('settingClassName').value.trim();
+      const description = document.getElementById('settingClassDesc').value.trim();
+      const semesterStart = document.getElementById('settingSemesterStart').value;
+      const newTotalPeriods = +document.getElementById('settingTotalPeriods').value || 12;
+      const newTotalWeeks = +document.getElementById('settingTotalWeeks').value || 16;
+      const newPeriodSettings = [];
+      for (let i = 0; i < newTotalPeriods; i++) {
+        newPeriodSettings.push({startTime: document.getElementById(`periodTime${i}`).value, duration: +document.getElementById(`periodDuration${i}`).value || 45});
+      }
+      try {
+        const res = await fetch('/api/schedule/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,name,description,semesterStart,totalPeriods:newTotalPeriods,totalWeeks:newTotalWeeks,periodSettings:newPeriodSettings})});
+        const data = await res.json();
+        if (data.success) {
+          schedule.name = name; schedule.description = description; schedule.semesterStart = semesterStart;
+          totalPeriods = newTotalPeriods; totalWeeks = newTotalWeeks; periodSettings = newPeriodSettings;
+          initWeekOptions();
+          document.getElementById('className').textContent = name;
+          document.getElementById('classDesc').textContent = description || '点击右上角切换编辑模式';
+          document.title = name;
+          closeSettingsModal(); updateWeekDisplay(); renderSchedule();
+          showToast('设置已保存', 'success');
+        } else showToast(data.error || '保存失败', 'error');
+      } catch { showToast('网络错误', 'error'); }
+    }
+
+    function openModal() {
+      editingCourseId = null;
+      document.getElementById('modalTitle').textContent = '添加课程';
+      document.getElementById('courseName').value = document.getElementById('coursePeriod').value = document.getElementById('courseLocation').value = document.getElementById('courseTeacher').value = '';
+      document.getElementById('courseDay').value = currentDay;
+      document.getElementById('courseStartWeek').value = '1';
+      document.getElementById('courseEndWeek').value = totalWeeks;
+      document.getElementById('courseWeekType').value = 'all';
+      document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
+      document.querySelector('.color-option').classList.add('selected');
+      document.getElementById('courseModal').classList.add('active');
+    }
+
+    function closeModal() { document.getElementById('courseModal').classList.remove('active'); editingCourseId = null; }
+
+    async function saveCourse() {
+      const name = document.getElementById('courseName').value.trim();
+      const period = document.getElementById('coursePeriod').value.trim();
+      const day = document.getElementById('courseDay').value;
+      if (!name) return showToast('请输入课程名称', 'error');
+      if (!period) return showToast('请输入节次', 'error');
+      const course = {
+        id: editingCourseId || Date.now().toString(),
+        name, period, day,
+        location: document.getElementById('courseLocation').value.trim(),
+        teacher: document.getElementById('courseTeacher').value.trim(),
+        type: document.querySelector('.color-option.selected').dataset.type,
+        startWeek: +document.getElementById('courseStartWeek').value,
+        endWeek: +document.getElementById('courseEndWeek').value,
+        weekType: document.getElementById('courseWeekType').value
+      };
+      if (editingCourseId) Object.keys(schedule.courses).forEach(d => schedule.courses[d] = schedule.courses[d].filter(c => c.id !== editingCourseId));
+      if (!schedule.courses[day]) schedule.courses[day] = [];
+      schedule.courses[day].push(course);
+      closeModal();
+      if (day !== currentDay) { currentDay = day; document.querySelectorAll('.day-tab').forEach(t => t.classList.toggle('active', t.dataset.day === day)); }
+      renderSchedule();
+      // 自动保存
+      await autoSave();
+    }
+
+    function editCourse(id) {
+      const c = schedule.courses[currentDay].find(x => x.id === id);
+      if (!c) return;
+      editingCourseId = id;
+      document.getElementById('modalTitle').textContent = '编辑课程';
+      document.getElementById('courseName').value = c.name;
+      document.getElementById('coursePeriod').value = c.period;
+      document.getElementById('courseDay').value = currentDay;
+      document.getElementById('courseLocation').value = c.location || '';
+      document.getElementById('courseTeacher').value = c.teacher || '';
+      document.getElementById('courseStartWeek').value = c.startWeek || 1;
+      document.getElementById('courseEndWeek').value = c.endWeek || totalWeeks;
+      document.getElementById('courseWeekType').value = c.weekType || 'all';
+      document.querySelectorAll('.color-option').forEach(o => o.classList.toggle('selected', o.dataset.type === (c.type || '')));
+      document.getElementById('courseModal').classList.add('active');
+    }
+
+    async function deleteCourse(id) {
+      if (!confirm('确定删除这门课程？')) return;
+      schedule.courses[currentDay] = schedule.courses[currentDay].filter(c => c.id !== id);
+      renderSchedule();
+      // 自动保存
+      await autoSave();
+    }
+
+    // 自动保存（静默保存，不显示提示）
+    async function autoSave() {
+      try {
+        const res = await fetch('/api/schedule/courses', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,courses:schedule.courses})});
+        const data = await res.json();
+        if (data.success) {
+          showToast('已自动保存', 'success');
+        } else {
+          showToast(data.error || '保存失败', 'error');
+        }
+      } catch { showToast('网络错误', 'error'); }
+    }
+
+    async function saveChanges() {
+      const btn = document.querySelector('.toolbar-btn:nth-child(2)');
+      btn.textContent = '保存中...';
+      try {
+        const res = await fetch('/api/schedule/courses', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,courses:schedule.courses})});
+        const data = await res.json();
+        showToast(data.success ? '保存成功' : data.error || '保存失败', data.success ? 'success' : 'error');
+      } catch { showToast('网络错误', 'error'); }
+      btn.textContent = '💾 保存';
+    }
+
+    function clearAll() {
+      if (!confirm('确定清空所有课程？此操作不可恢复。')) return;
+      schedule.courses = {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]};
+      renderSchedule();
+      showToast('已清空，记得保存');
+    }
+
+    function exportData() {
+      const data = {name:schedule.name,description:schedule.description,semesterStart:schedule.semesterStart,courses:schedule.courses,totalPeriods,totalWeeks,periodSettings,exportDate:new Date().toISOString()};
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
+      const a = Object.assign(document.createElement('a'), {href: url, download: `${schedule.name}_课表.json`});
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('已导出');
+    }
+
+    async function importData(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!data.courses) throw new Error('Invalid format');
+          const res = await fetch('/api/import', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,data})});
+          const result = await res.json();
+          if (result.success) {
+            if (result.schedule) schedule = result.schedule;
+            if (data.periodSettings?.length) periodSettings = data.periodSettings;
+            if (data.totalPeriods) totalPeriods = data.totalPeriods;
+            if (data.totalWeeks) totalWeeks = data.totalWeeks;
+            initWeekOptions(); initPeriodSettings();
+            document.getElementById('className').textContent = schedule.name;
+            document.getElementById('classDesc').textContent = schedule.description || '点击右上角切换编辑模式';
+            document.title = schedule.name;
+            updateWeekDisplay(); renderSchedule(); updateNextCourse();
+            showToast('导入成功', 'success');
+          } else showToast(result.error || '导入失败', 'error');
+        } catch { showToast('文件格式错误', 'error'); }
+      };
+      reader.readAsText(file);
+      input.value = '';
+    }
+
+    function showToast(msg, type = '') {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'toast show ' + type;
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+GNU AFFERO GENERAL PUBLIC LICENSE
+Version 3, 19 November 2007
+
+Copyright (C) 2026 yang12535
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+================================================================================
+
+附加条款（根据 AGPL-3.0 第 7 节）：
+
+1. 如果你部署本软件作为网络服务（如课表查询系统），你必须向服务的
+   用户提供源代码下载链接，或告知用户如何获取源代码。
+
+2. 如果你对本软件进行修改并部署为网络服务，你必须在服务的显著位置
+   标注"基于 schedule-web 修改"，并提供修改后的源代码。
+
+3. 禁止移除或修改本软件中的版权信息和许可证声明。
+
+================================================================================
