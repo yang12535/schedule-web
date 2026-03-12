@@ -147,4 +147,4 @@ schedule-web/
 
 ## 📄 许可证
 
-[AGPL-3.0](LICENSE) © 2024 yang12535
+[AGPL-3.0](LICENSE) © 2026 yang12535
