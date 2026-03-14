@@ -5,6 +5,8 @@
 [![Docker](https://img.shields.io/badge/Docker-支持-blue)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
+## ⚠️注意！！！如果无法保存/修改课程，请检查是否选择了颜色！！！⚠️
+
 ## ✨ 功能特性
 
 - 📱 **响应式设计** - 支持手机、平板、电脑访问
