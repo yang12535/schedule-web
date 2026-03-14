@@ -99,10 +99,14 @@
     
     .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: white; border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
     .next-course.no-class { border-color: var(--gray-400); }
+    .next-course.in-class { border-color: #10B981; }
     .next-course-title { font-size: 14px; color: var(--coral); font-weight: 600; margin-bottom: 8px; }
     .next-course.no-class .next-course-title { color: var(--gray-400); }
+    .next-course.in-class .next-course-title { color: #10B981; }
     .next-course-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     .next-course-info { font-size: 13px; color: var(--gray-600); }
+    .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; }
+    .next-course-secondary { font-size: 13px; color: var(--gray-400); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--gray-200); }
     
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
@@ -204,15 +208,15 @@
           <input type="text" class="form-input" id="courseTeacher" placeholder="例如：张老师">
         </div>
         <div class="form-group">
-          <label class="form-label">颜色标记</label>
+          <label class="form-label">颜色标记 <span style="color:#DC2626;font-size:12px;">* 必须选择</span></label>
           <div class="color-options" id="colorOptions">
-            <div class="color-option selected" data-type="" style="background: #F5F5F5;"></div>
             <div class="color-option" data-type="database" style="background: #E3F2FD;"></div>
             <div class="color-option" data-type="english" style="background: #FFF3E0;"></div>
             <div class="color-option" data-type="security" style="background: #E8F5E9;"></div>
             <div class="color-option" data-type="politics" style="background: #F3E5F5;"></div>
             <div class="color-option" data-type="linux" style="background: #E0F7FA;"></div>
           </div>
+          <div style="color:#DC2626;font-size:12px;margin-top:8px;">⚠️ 保存前必须选择一个颜色，否则无法保存</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -405,12 +409,41 @@
 
     function isCurrentCourse(c) {
       if (currentWeekOffset !== 0) return false;
+      // 修复：周末时不标记任何课程为当前课程
+      const today = new Date().getDay();
+      if (today === 0 || today === 6) return false;
       const now = new Date().getHours() * 60 + new Date().getMinutes();
       const ps = parsePeriods(c.period);
       const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
       if (!first || !last) return false;
       return now >= (+first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1]) && 
              now < (+last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration);
+    }
+
+    // 获取当前正在上的课程
+    function getCurrentCourse() {
+      if (currentWeekOffset !== 0) return null;
+      // 周末无课
+      const today = new Date().getDay();
+      if (today === 0 || today === 6) return null;
+      const dayMap = {1:'monday',2:'tuesday',3:'wednesday',4:'thursday',5:'friday'};
+      const todayKey = dayMap[today];
+      if (!todayKey) return null;
+      const week = getCurrentWeek();
+      const courses = schedule.courses[todayKey] || [];
+      const now = new Date().getHours() * 60 + new Date().getMinutes();
+      for (const c of courses) {
+        if (!isActiveInWeek(c, week)) continue;
+        const ps = parsePeriods(c.period);
+        const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
+        if (!first || !last) continue;
+        const startMin = +first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1];
+        const endMin = +last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration;
+        if (now >= startMin && now < endMin) {
+          return {...c, dayName: dayNames[todayKey], startMin, endMin, remaining: endMin - now};
+        }
+      }
+      return null;
     }
 
     function isActiveInWeek(c, week) {
@@ -470,17 +503,78 @@
       return courses.sort((a,b) => a.time - b.time)[0] || null;
     }
 
+    function formatRemaining(minutes) {
+      if (minutes < 0) minutes = 0;
+      const hours = Math.floor(minutes / 60);
+      const mins = Math.floor(minutes % 60);
+      if (hours > 0) return `${hours}小时${mins}分钟`;
+      return `${mins}分钟`;
+    }
+
     function updateNextCourse() {
-      const el = document.getElementById('nextCourse'), content = document.getElementById('nextCourseContent'), next = findNextCourse();
-      if (!next) {
+      const el = document.getElementById('nextCourse'), content = document.getElementById('nextCourseContent');
+      const current = getCurrentCourse();
+      const next = findNextCourse();
+      
+      // 清除状态类
+      el.classList.remove('no-class', 'in-class', 'ending-soon');
+      
+      // 情况1：周末或无课
+      if (!current && !next) {
         el.classList.add('no-class');
         content.innerHTML = '<div class="next-course-name">今日无课</div><div class="next-course-info">好好休息吧 🎉</div>';
         return;
       }
-      el.classList.remove('no-class');
-      const diff = next.time - new Date(), hours = Math.floor(diff/3600000), mins = Math.floor((diff%3600000)/60000);
-      const countdown = hours > 0 ? `还有${hours}小时${mins}分钟` : mins > 0 ? `还有${mins}分钟` : '即将开始';
-      content.innerHTML = `<div class="next-course-name">${next.name}</div><div class="next-course-info">${next.dayName} ${getTimeText(next.period)} | 📍${next.location||'暂无地点'}</div><div style="margin-top:8px;font-size:12px;color:#FF6B6B;font-weight:600;">${countdown}</div>`;
+      
+      // 情况2：正在上课
+      if (current) {
+        el.classList.add('in-class');
+        const isEndingSoon = current.remaining <= 10; // 10分钟内下课
+        
+        if (isEndingSoon && next) {
+          // 下课前 ≤10 分钟：主从切换！大字显示下一节课，小字显示当前即将结束
+          el.classList.add('ending-soon');
+          const diff = next.time - new Date();
+          const diffMins = Math.floor(diff / 60000);
+          
+          let html = `<div class="next-course-title">⏰ 下一节课</div>`;
+          html += `<div class="next-course-name">${next.name}</div>`;
+          html += `<div class="next-course-info">${next.dayName === current.dayName ? '今天' : next.dayName} ${getTimeText(next.period)} | 📍${next.location||'暂无地点'}</div>`;
+          html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
+          // 小字显示当前课即将结束
+          html += `<div class="next-course-secondary">${current.name} · 剩余${formatRemaining(current.remaining)}下课</div>`;
+          content.innerHTML = html;
+        } else {
+          // 正常上课中：大字显示当前课程，小字显示下一节课
+          const titleText = '当前课程';
+          let html = `<div class="next-course-title">📚 ${titleText}</div>`;
+          html += `<div class="next-course-name">${current.name} · 剩余${formatRemaining(current.remaining)}</div>`;
+          html += `<div class="next-course-info">📍${current.location||'暂无地点'} ${getTimeText(current.period)}</div>`;
+          
+          if (next) {
+            const diff = next.time - new Date();
+            const diffMins = Math.floor(diff / 60000);
+            html += `<div class="next-course-secondary">下一节课：${next.name}（${next.dayName === current.dayName ? '今天' : next.dayName}，还有${formatRemaining(diffMins)}）</div>`;
+          }
+          content.innerHTML = html;
+        }
+        return;
+      }
+      
+      // 情况3：课间休息/无课中，但有下一节课
+      if (!current && next) {
+        el.classList.remove('in-class', 'no-class');
+        const diff = next.time - new Date();
+        const diffMins = Math.floor(diff / 60000);
+        const isToday = next.dayName === dayNames[['monday','tuesday','wednesday','thursday','friday'][new Date().getDay() - 1]];
+        
+        let html = `<div class="next-course-title">⏰ 下一节课</div>`;
+        html += `<div class="next-course-name">${next.name}</div>`;
+        html += `<div class="next-course-info">${isToday ? '今天' : next.dayName} ${getTimeText(next.period)} | 📍${next.location||'暂无地点'}</div>`;
+        html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
+        content.innerHTML = html;
+        return;
+      }
     }
 
     function setupListeners() {
@@ -500,7 +594,11 @@
       else {
         const res = await fetch('/api/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:''})});
         const data = await res.json();
-        if (data.requirePassword) document.getElementById('passwordModal').classList.add('active');
+        if (data.requirePassword) {
+          document.getElementById('passwordModal').classList.add('active');
+          // 隐藏下一节课卡片
+          document.getElementById('nextCourse').style.display = 'none';
+        }
         else enableEditMode();
       }
     }
@@ -514,7 +612,12 @@
       toolbar.style.display = isEditMode ? 'flex' : 'none';
     }
 
-    function closePasswordModal() { document.getElementById('passwordModal').classList.remove('active'); document.getElementById('passwordInput').value = ''; }
+    function closePasswordModal() { 
+      document.getElementById('passwordModal').classList.remove('active'); 
+      document.getElementById('passwordInput').value = ''; 
+      // 恢复下一节课卡片显示
+      document.getElementById('nextCourse').style.display = 'block';
+    }
 
     async function verifyPassword() {
       const password = document.getElementById('passwordInput').value;
@@ -532,9 +635,15 @@
       document.getElementById('settingTotalWeeks').value = totalWeeks;
       initPeriodSettings();
       document.getElementById('settingsModal').classList.add('active');
+      // 隐藏下一节课卡片
+      document.getElementById('nextCourse').style.display = 'none';
     }
 
-    function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('active'); }
+    function closeSettingsModal() { 
+      document.getElementById('settingsModal').classList.remove('active'); 
+      // 恢复下一节课卡片显示
+      document.getElementById('nextCourse').style.display = 'block';
+    }
 
     async function saveSettings() {
       const name = document.getElementById('settingClassName').value.trim();
@@ -571,11 +680,17 @@
       document.getElementById('courseEndWeek').value = totalWeeks;
       document.getElementById('courseWeekType').value = 'all';
       document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
-      document.querySelector('.color-option').classList.add('selected');
       document.getElementById('courseModal').classList.add('active');
+      // 隐藏下一节课卡片，避免遮挡弹窗底部
+      document.getElementById('nextCourse').style.display = 'none';
     }
 
-    function closeModal() { document.getElementById('courseModal').classList.remove('active'); editingCourseId = null; }
+    function closeModal() { 
+      document.getElementById('courseModal').classList.remove('active'); 
+      editingCourseId = null; 
+      // 恢复下一节课卡片显示
+      document.getElementById('nextCourse').style.display = 'block';
+    }
 
     async function saveCourse() {
       const name = document.getElementById('courseName').value.trim();
@@ -583,12 +698,15 @@
       const day = document.getElementById('courseDay').value;
       if (!name) return showToast('请输入课程名称', 'error');
       if (!period) return showToast('请输入节次', 'error');
+      const type = document.querySelector('.color-option.selected').dataset.type;
+      // 校验颜色是否选择
+      if (!type) return showToast('请选择颜色', 'error');
       const course = {
         id: editingCourseId || Date.now().toString(),
         name, period, day,
         location: document.getElementById('courseLocation').value.trim(),
         teacher: document.getElementById('courseTeacher').value.trim(),
-        type: document.querySelector('.color-option.selected').dataset.type,
+        type,
         startWeek: +document.getElementById('courseStartWeek').value,
         endWeek: +document.getElementById('courseEndWeek').value,
         weekType: document.getElementById('courseWeekType').value
@@ -676,6 +794,7 @@
         try {
           const data = JSON.parse(e.target.result);
           if (!data.courses) throw new Error('Invalid format');
+
           const res = await fetch('/api/import', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,data})});
           const result = await res.json();
           if (result.success) {
