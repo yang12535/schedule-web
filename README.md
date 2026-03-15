@@ -3,6 +3,7 @@
 简洁美观的班级课表管理系统，支持课程编辑、周次管理、数据导入导出等功能。
 
 [![Docker](https://img.shields.io/badge/Docker-支持-blue)](https://www.docker.com/)
+[![GitHub Container Registry](https://img.shields.io/badge/GHCR-预编译镜像-blue?logo=github)](https://github.com/yang12535/schedule-web/pkgs/container/schedule-web)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
 ## ⚠️注意！！！如果无法保存/修改课程，请检查是否选择了颜色！！！⚠️
@@ -18,9 +19,28 @@
 
 ## 🚀 快速部署
 
-### 方式一：VPS 一键部署（推荐）
+### 方式一：预编译镜像快速部署（推荐 ⭐）
 
-支持 **Debian/Ubuntu/CentOS/RHEL**：
+使用 GitHub Container Registry 预编译镜像，无需构建，秒级启动：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yang12535/schedule-web/main/deploy/install-prebuilt.sh | bash
+```
+
+或使用 Makefile：
+
+```bash
+make deploy-fast
+```
+
+**特点**：
+- ⚡ 秒级启动，无需等待构建
+- 🔄 自动拉取最新镜像
+- 🏗️ 支持 amd64/arm64 双架构
+
+### 方式二：VPS 一键部署（完整构建）
+
+如需本地构建镜像：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yang12535/schedule-web/main/deploy/install.sh | bash
@@ -32,7 +52,9 @@ curl -fsSL https://raw.githubusercontent.com/yang12535/schedule-web/main/deploy/
 make deploy
 ```
 
-### 方式二：Docker Compose
+### 方式三：Docker Compose
+
+#### 使用预编译镜像（推荐）
 
 ```bash
 # 1. 克隆仓库
@@ -43,12 +65,19 @@ cd schedule-web
 cp .env.example .env
 # 编辑 .env 文件设置参数
 
-# 3. 启动服务
-make start
-# 或: docker-compose up -d
+# 3. 拉取并启动（使用预编译镜像）
+make update-image
+# 或: docker-compose pull && docker-compose up -d
 ```
 
-### 方式三：本地开发
+#### 本地构建
+
+```bash
+# 使用本地构建的镜像
+docker-compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+### 方式四：本地开发
 
 ```bash
 # 安装依赖
@@ -75,12 +104,12 @@ make dev
 make help
 
 # 常用操作
-make start      # 启动服务
-make stop       # 停止服务
-make restart    # 重启服务
-make logs       # 查看日志
-make backup     # 备份数据
-make update     # 更新服务
+make start         # 启动服务
+make stop          # 停止服务
+make restart       # 重启服务
+make logs          # 查看日志
+make backup        # 备份数据
+make update-image  # 更新到最新预编译镜像
 ```
 
 或使用管理脚本：
@@ -103,18 +132,22 @@ make update     # 更新服务
 
 ```
 schedule-web/
-├── src/                    # 源代码
-│   ├── server/            # 后端服务 (Node.js + Express)
-│   └── public/            # 前端页面
-├── deploy/                # 部署脚本
-│   ├── install.sh        # 一键安装脚本
-│   └── manage.sh         # 管理脚本
-├── data/                  # 数据存储 (Docker 挂载)
-├── logs/                  # 日志文件 (Docker 挂载)
-├── docker-compose.yml     # Docker Compose 配置
-├── Dockerfile            # Docker 镜像构建
-├── Makefile              # 快捷命令
-└── .env.example          # 环境变量示例
+├── src/                           # 源代码
+│   ├── server/                   # 后端服务 (Node.js + Express)
+│   └── public/                   # 前端页面
+├── deploy/                       # 部署脚本
+│   ├── install.sh               # 一键安装脚本（本地构建）
+│   ├── install-prebuilt.sh      # 快速部署脚本（预编译镜像）⭐
+│   └── manage.sh                # 管理脚本
+├── .github/workflows/           # GitHub Actions
+│   └── docker.yml               # 自动构建 Docker 镜像
+├── data/                        # 数据存储 (Docker 挂载)
+├── logs/                        # 日志文件 (Docker 挂载)
+├── docker-compose.yml           # Docker Compose 配置（预编译镜像）⭐
+├── docker-compose.build.yml     # Docker Compose 配置（本地构建）
+├── Dockerfile                   # Docker 镜像构建
+├── Makefile                     # 快捷命令
+└── .env.example                 # 环境变量示例
 ```
 
 ## 📥 数据导入导出

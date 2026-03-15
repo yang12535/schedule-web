@@ -1,8 +1,18 @@
 version: '3.8'
 
+# ========================================
+# 班级课表服务 - Docker Compose 配置
+# ========================================
+# 使用方式:
+#   1. 预编译镜像(推荐): docker-compose up -d
+#   2. 本地构建:         docker-compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# ========================================
+
 services:
   schedule:
-    build: .
+    # 预编译镜像 (GitHub Container Registry)
+    image: ghcr.io/yang12535/schedule-web:latest
+    # 如需本地构建，请使用 docker-compose.build.yml 或注释掉上面一行
     container_name: class-schedule
     ports:
       - "${HOST_PORT:-30080}:3000"
@@ -21,3 +31,9 @@ services:
     restart: unless-stopped
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/schedule"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

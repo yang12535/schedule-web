@@ -26,7 +26,9 @@ help:
 	@echo "  make reset        - 重置数据（谨慎！）"
 	@echo ""
 	@echo "VPS 一键部署:"
-	@echo "  make deploy       - 部署到 VPS"
+	@echo "  make deploy       - 部署到 VPS（完整构建）"
+	@echo "  make deploy-fast  - 快速部署（使用预编译镜像）"
+	@echo "  make update-image - 更新到最新预编译镜像"
 
 # Docker 命令
 build:
@@ -79,6 +81,16 @@ install-dev:
 # VPS 部署
 deploy:
 	@bash deploy/install.sh
+
+# 快速部署（使用预编译镜像）
+deploy-fast:
+	@bash deploy/install-prebuilt.sh
+
+# 更新到最新预编译镜像
+update-image:
+	docker-compose pull
+	docker-compose up -d
+	@echo "已更新到最新镜像"
 
 # 清理
 clean:
