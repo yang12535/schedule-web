@@ -1,11 +1,15 @@
 # ========================================
 # 班级课表服务 - Docker 构建
-# 支持多阶段构建，优化镜像大小
 # ========================================
 
 FROM node:18-alpine
 
 WORKDIR /app
+
+# 安装 wget (给 healthcheck 用) + 创建非 root 用户
+RUN apk add --no-cache wget && \
+    addgroup -g 1001 -S schedule && \
+    adduser -S schedule -u 1001
 
 # 安装依赖
 COPY src/server/package*.json ./
@@ -15,8 +19,12 @@ RUN npm ci --only=production && npm cache clean --force
 COPY src/server/*.js ./
 COPY src/public/ ./public/
 
-# 创建数据目录
-RUN mkdir -p /data/logs
+# 创建数据目录并改权限
+RUN mkdir -p /data/logs && \
+    chown -R schedule:schedule /app /data
+
+# 切换到非 root 用户
+USER schedule
 
 # 环境变量
 ENV NODE_ENV=production \
