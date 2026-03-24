@@ -1,0 +1,9 @@
+﻿node_modules/
+data/
+logs/
+*.log
+.password
+deploy.info
+backups/
+.DS_Store
+Thumbs.db

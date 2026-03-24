@@ -1,0 +1,19 @@
+# 自动处理换行符
+* text=auto
+
+# Shell 脚本强制使用 LF
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows 批处理文件使用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 其他配置文件
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
