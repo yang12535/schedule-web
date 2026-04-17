@@ -100,13 +100,20 @@
     .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: white; border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
     .next-course.no-class { border-color: var(--gray-400); }
     .next-course.in-class { border-color: #10B981; }
+    .next-course.ending-soon { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2), 0 4px 20px rgba(0,0,0,0.1); animation: pulse-warning 1.2s ease-in-out infinite; }
     .next-course-title { font-size: 14px; color: var(--coral); font-weight: 600; margin-bottom: 8px; }
     .next-course.no-class .next-course-title { color: var(--gray-400); }
     .next-course.in-class .next-course-title { color: #10B981; }
+    .next-course.ending-soon .next-course-title { color: #D97706; }
     .next-course-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     .next-course-info { font-size: 13px; color: var(--gray-600); }
     .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; }
     .next-course-secondary { font-size: 13px; color: var(--gray-400); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--gray-200); }
+    @keyframes pulse-warning {
+      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.28), 0 4px 20px rgba(0,0,0,0.1); }
+      70% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0), 0 4px 20px rgba(0,0,0,0.1); }
+      100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 4px 20px rgba(0,0,0,0.1); }
+    }
     
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
@@ -395,7 +402,9 @@
 
     function getCurrentWeek() {
       if (!schedule || !schedule.semesterStart) return 1;
-      const diff = new Date() - new Date(schedule.semesterStart);
+      const today = new Date();
+      const semesterStart = new Date(schedule.semesterStart);
+      const diff = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(semesterStart.getFullYear(), semesterStart.getMonth(), semesterStart.getDate());
       return Math.max(1, Math.floor(diff / 604800000) + 1);
     }
 
@@ -413,7 +422,16 @@
       });
     }
 
-    function changeWeek(delta) { currentWeekOffset += delta; updateWeekDisplay(); renderSchedule(); updateNextCourse(); }
+    function changeWeek(delta) {
+      if (!schedule) return;
+      const currentWeek = getCurrentWeek();
+      const targetWeek = currentWeek + currentWeekOffset + delta;
+      if (targetWeek < 1 || targetWeek > totalWeeks) return;
+      currentWeekOffset += delta;
+      updateWeekDisplay();
+      renderSchedule();
+      updateNextCourse();
+    }
 
     function parsePeriods(p) {
       // 修复：处理空值
@@ -535,15 +553,21 @@
       const courses = [];
       dayOrder.forEach((day, i) => {
         (schedule.courses[day] || []).forEach(c => {
-          if (!isActiveInWeek(c, week)) return;
           const ps = parsePeriods(c.period);
           if (ps.length === 0) return;
           const setting = periodSettings[ps[0]-1];
           if (!setting) return;
           const [h, m] = setting.startTime.split(':');
           const time = new Date(now);
-          // 修复：正确计算课程日期
-          const dayDiff = (i + 1) - time.getDay();
+          // 修复：正确计算课程日期（周日 getDay()=0 视为 7）
+          const todayDay = time.getDay() === 0 ? 7 : time.getDay();
+          let dayDiff = (i + 1) - todayDay;
+          let weekOffset = 0;
+          if (dayDiff < 0) {
+            dayDiff += 7;
+            weekOffset = 1;
+          }
+          if (!isActiveInWeek(c, week + weekOffset)) return;
           time.setDate(time.getDate() + dayDiff);
           time.setHours(+h, +m, 0, 0);
           if (time > now) courses.push({...c, dayName: dayNames[day], time});
@@ -902,6 +926,7 @@
       if (!confirm('确定清空所有课程？此操作不可恢复。')) return;
       schedule.courses = {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]};
       renderSchedule();
+      updateNextCourse();
       // 修复：清空后立即保存到服务器
       await autoSave();
       showToast('已清空并保存', 'success');

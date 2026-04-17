@@ -82,11 +82,15 @@ async function loadSchedule() {
 }
 
 async function saveSchedule(data) {
+  const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   try {
     // 确保目录存在
     await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-    await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
+    await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
+    await fs.rename(tempFile, DATA_FILE);
   } catch (err) {
+    // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
+    try { await fs.unlink(tempFile); } catch (e) { if (e.code !== 'ENOENT') console.error('清理临时文件失败:', e.message); }
     console.error('保存数据失败:', err.message);
     throw err;
   }
@@ -284,6 +288,11 @@ app.get('/api/logs/:file', async (req, res) => {
     console.error('读取日志失败:', err);
     res.status(404).json({error:'Log not found'});
   }
+});
+
+// 统一处理未匹配的 API 路由，返回 JSON 404
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'API not found' });
 });
 
 // SPA fallback - 使用 PUBLIC_PATH
