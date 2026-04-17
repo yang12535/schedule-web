@@ -167,6 +167,62 @@ schedule-web/
 - 所有数据存储在本地 `data/` 目录
 - **v1.0.2 安全加固**：添加 XSS 防护、路径遍历防护、输入验证
 
+## ❓ 常见问题
+
+### Q1：更新镜像后页面卡在"加载中..."，API 请求超时，容器 CPU 占用极高
+
+**现象**：
+- 页面标题显示正常，但课表数据一直显示"加载中..."
+- `curl /api/schedule` 超时无响应
+- `docker stats` 显示容器 CPU 占用 300%+
+
+**根因**：
+Docker bind mount 绑定的是**目录 inode**，而非路径名。如果在容器运行期间，宿主机上**删除并重建**了挂载源目录（如 `rm -rf data && mkdir data`），bind mount 会指向一个已被标记为 `(deleted)` 的孤儿 inode，容器内看到的 `/data` 实际是空的。
+
+验证方法：
+```bash
+# 宿主机上检查 mountinfo
+CONTAINER_ID=$(docker-compose ps -q schedule)
+cat /proc/$(docker inspect --format '{{.State.Pid}}' "$CONTAINER_ID")/mountinfo | grep '/data'
+# 若输出中包含 "(deleted)"（或转义形式 "\040(deleted)"），即确认此问题
+```
+
+**修复**：
+```bash
+# 停止并重建容器，让 Docker 重新建立挂载
+make stop && make start
+# 或手动：
+docker-compose down
+docker-compose up -d
+```
+
+**预防**：
+- 备份或更新数据时，**不要删除 `data/` 目录本身**，只覆盖目录内的文件：
+  ```bash
+  # ✅ 正确：保留目录 inode
+  cp backup/schedule.json data/schedule.json
+
+  # ❌ 错误：会断开 bind mount
+  rm -rf data/
+  mkdir data
+  cp backup/schedule.json data/
+  ```
+- 若使用 `rsync` 同步，加 `--inplace` 参数避免删除重建目录
+
+### Q2：如何固定编辑密码，避免每次更新后变化？
+
+在 `.env` 或 `docker-compose.yml` 中显式设置 `EDIT_PASSWORD`：
+```yaml
+environment:
+  - EDIT_PASSWORD=你的密码
+```
+`EDIT_PASSWORD` 的行为分为三种情况：
+- **未设置 / 未传入容器环境变量**：每次容器重启都会随机生成一个 6 位数字密码。
+- **设置为空字符串**：关闭密码保护。
+- **设置为具体值**：使用该值作为固定编辑密码。
+
+---
+
 ## 📝 更新日志
 
 ### v1.0.4 (2026-04-17) - 公告与补课功能版
