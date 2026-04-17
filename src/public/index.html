@@ -983,8 +983,10 @@
       document.getElementById('courseStartWeek').value = c.startWeek || 1;
       document.getElementById('courseEndWeek').value = c.endWeek || totalWeeks;
       document.getElementById('courseWeekType').value = c.weekType || 'all';
-      // 恢复补课模式状态
-      const isMakeup = c.startWeek === c.endWeek && c.weekType === 'all';
+      // 恢复补课模式状态：优先使用持久化的 isMakeup，兼容旧数据时再回退到启发式判断
+      const isMakeup = Object.prototype.hasOwnProperty.call(c, 'isMakeup')
+        ? !!c.isMakeup
+        : c.startWeek === c.endWeek && c.weekType === 'all';
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) { makeupCb.checked = isMakeup; toggleMakeupMode(); }
       document.querySelectorAll('.color-option').forEach(o => o.classList.toggle('selected', o.dataset.type === (c.type || '')));
@@ -1114,7 +1116,7 @@
       const content = document.getElementById('annContent');
       const dateEl = document.getElementById('annDate');
       if (!modal || !title || !content) return;
-      title.textContent = escapeHtml(ann.title || '公告');
+      title.textContent = ann.title || '公告';
       content.textContent = ann.content || '';
       const range = [];
       if (ann.startDate) range.push(`生效：${ann.startDate}`);
@@ -1182,9 +1184,10 @@
           if (a.startDate) range.push(a.startDate);
           if (a.endDate) range.push(a.endDate);
           const rangeStr = range.length ? range.join(' ~ ') : '永久有效';
+          const isEnabled = a.enabled !== false;
           return `
-            <div class="ann-list-item ${a.enabled ? '' : 'disabled'}">
-              <div class="ann-list-title">${escapeHtml(a.title)} ${a.enabled ? '' : '<span style="color:var(--gray-400);">(已禁用)</span>'}</div>
+            <div class="ann-list-item ${isEnabled ? '' : 'disabled'}">
+              <div class="ann-list-title">${escapeHtml(a.title)} ${isEnabled ? '' : '<span style="color:var(--gray-400);">(已禁用)</span>'}</div>
               <div class="ann-list-meta">${rangeStr}</div>
               <div class="ann-list-actions">
                 <button class="ann-btn-edit" onclick='editAnnouncement(${JSON.stringify(a).replace(/'/g, "&#39;")})'>编辑</button>
@@ -1272,7 +1275,7 @@
       const weekType = document.getElementById('courseWeekType');
       if (!checkbox || !hint) return;
       if (checkbox.checked) {
-        const currentWeek = getCurrentWeek() + currentWeekOffset;
+        const currentWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek() + currentWeekOffset));
         if (weekNum) weekNum.textContent = currentWeek;
         hint.style.display = 'block';
         if (startSel) startSel.value = currentWeek;
