@@ -90,9 +90,8 @@ async function saveSchedule(data) {
     await fs.rename(tempFile, DATA_FILE);
   } catch (err) {
     // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
-    try { await fs.unlink(tempFile); } catch { /* ignore cleanup errors */ }
-    console.error('保存数据失败:', err.message);
     try { await fs.unlink(tempFile); } catch (e) { if (e.code !== 'ENOENT') console.error('清理临时文件失败:', e.message); }
+    console.error('保存数据失败:', err.message);
     throw err;
   }
 }
