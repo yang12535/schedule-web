@@ -85,7 +85,7 @@ async function saveSchedule(data) {
   try {
     // 确保目录存在
     await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-    const tempFile = `${DATA_FILE}.tmp`;
+    const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
     await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
     await fs.rename(tempFile, DATA_FILE);
   } catch (err) {

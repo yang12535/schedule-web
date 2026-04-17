@@ -559,9 +559,9 @@
           if (!setting) return;
           const [h, m] = setting.startTime.split(':');
           const time = new Date(now);
-          // 修复：正确计算课程日期
-          const originalDayDiff = (i + 1) - time.getDay();
-          let dayDiff = originalDayDiff;
+          // 修复：正确计算课程日期（周日 getDay()=0 视为 7）
+          const todayDay = time.getDay() === 0 ? 7 : time.getDay();
+          let dayDiff = (i + 1) - todayDay;
           let weekOffset = 0;
           if (dayDiff < 0) {
             dayDiff += 7;
