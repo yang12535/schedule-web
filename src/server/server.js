@@ -82,13 +82,15 @@ async function loadSchedule() {
 }
 
 async function saveSchedule(data) {
+  const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   try {
     // 确保目录存在
     await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-    const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
     await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
     await fs.rename(tempFile, DATA_FILE);
   } catch (err) {
+    // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
+    try { await fs.unlink(tempFile); } catch { /* ignore cleanup errors */ }
     console.error('保存数据失败:', err.message);
     throw err;
   }
