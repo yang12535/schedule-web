@@ -115,6 +115,35 @@
       100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 4px 20px rgba(0,0,0,0.1); }
     }
     
+    /* 公告弹窗 */
+    .announcement-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 3000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+    .announcement-overlay.active { opacity: 1; visibility: visible; }
+    .announcement-modal { background: white; border-radius: 20px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    .announcement-overlay.active .announcement-modal { transform: scale(1); }
+    .announcement-header { background: linear-gradient(135deg, #4A90D9, #357ABD); color: white; padding: 24px 20px 16px; border-radius: 20px 20px 0 0; }
+    .announcement-header h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .announcement-header .ann-date { font-size: 12px; opacity: 0.8; }
+    .announcement-body { padding: 20px; font-size: 15px; line-height: 1.7; color: var(--gray-900); white-space: pre-wrap; }
+    .announcement-footer { padding: 16px 20px; border-top: 1px solid var(--gray-200); display: flex; gap: 10px; }
+    .announcement-footer .btn { flex: 1; }
+    .announcement-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
+    
+    /* 补课标签 */
+    .makeup-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
+    
+    /* 公告管理 */
+    .ann-list-item { background: white; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #4A90D9; }
+    .ann-list-item.disabled { border-left-color: var(--gray-400); opacity: 0.6; }
+    .ann-list-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .ann-list-meta { font-size: 12px; color: var(--gray-400); margin-bottom: 8px; }
+    .ann-list-actions { display: flex; gap: 8px; }
+    .ann-list-actions button { padding: 6px 12px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .ann-btn-edit { background: var(--primary-light); color: var(--primary); }
+    .ann-btn-del { background: #FEE2E2; color: #DC2626; }
+    .form-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .form-check input { width: 18px; height: 18px; accent-color: var(--primary); }
+    .form-check-label { font-size: 14px; color: var(--gray-600); }
+    
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     
@@ -147,6 +176,7 @@
       <button class="toolbar-btn primary" onclick="openModal()">+ 添加</button>
       <button class="toolbar-btn" onclick="saveChanges()">💾 保存</button>
       <button class="toolbar-btn" onclick="openSettingsModal()">⚙️ 设置</button>
+      <button class="toolbar-btn" onclick="openAnnManageModal()">📢 公告</button>
       <button class="toolbar-btn" onclick="document.getElementById('fileInput').click()">📥 导入</button>
       <button class="toolbar-btn" onclick="exportData()">📤 导出</button>
       <button class="toolbar-btn danger" onclick="clearAll()">🗑️ 清空</button>
@@ -224,6 +254,13 @@
             <div class="color-option" data-type="linux" style="background: #E0F7FA;"></div>
           </div>
         </div>
+        <div class="form-check" style="margin-top: 8px;">
+          <input type="checkbox" id="courseMakeup">
+          <label class="form-check-label" for="courseMakeup">补课模式（仅本周生效）</label>
+        </div>
+        <div id="makeupHint" style="font-size: 12px; color: var(--gray-400); margin-top: 4px; display: none;">
+          周次将自动设为当前周（第<span id="makeupWeekNum">1</span>周），且仅在该周显示
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal()">取消</button>
@@ -267,6 +304,64 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeSettingsModal()">取消</button>
         <button class="btn btn-primary" onclick="saveSettings()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Announcement Modal -->
+  <div class="announcement-overlay" id="announcementModal">
+    <div class="announcement-modal">
+      <div class="announcement-header">
+        <h3 id="annTitle">📢 公告</h3>
+        <div class="ann-date" id="annDate"></div>
+      </div>
+      <div class="announcement-body" id="annContent"></div>
+      <div class="announcement-footer">
+        <button class="btn btn-secondary" onclick="dismissAnnouncement()">我知道了</button>
+        <button class="btn btn-primary" onclick="dontShowAgain()" id="annDontShowBtn">不再显示</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Announcement Manage Modal -->
+  <div class="modal-overlay" id="annManageModal">
+    <div class="modal" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3 class="modal-title">📢 公告管理</h3>
+        <button class="modal-close" onclick="closeAnnManageModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="annListContainer"></div>
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--gray-200);">
+          <h4 style="font-size: 16px; margin-bottom: 12px;">添加/编辑公告</h4>
+          <input type="hidden" id="annEditId">
+          <div class="form-group">
+            <label class="form-label">标题</label>
+            <input type="text" class="form-input" id="annEditTitle" placeholder="公告标题">
+          </div>
+          <div class="form-group">
+            <label class="form-label">内容</label>
+            <textarea class="form-input" id="annEditContent" rows="4" placeholder="公告内容" style="resize: vertical;"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">生效日期</label>
+              <input type="date" class="form-input" id="annEditStart">
+            </div>
+            <div class="form-group">
+              <label class="form-label">截止日期</label>
+              <input type="date" class="form-input" id="annEditEnd">
+            </div>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" id="annEditEnabled" checked>
+            <label class="form-check-label" for="annEditEnabled">启用</label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAnnManageModal()">关闭</button>
+        <button class="btn btn-primary" onclick="saveAnnouncement()">保存公告</button>
       </div>
     </div>
   </div>
@@ -319,6 +414,8 @@
         setCurrentDayByDate();
         setupListeners();
         updateNextCourse();
+        // 加载公告（非阻塞）
+        loadAnnouncements();
         // 修复：保存定时器引用以便清理
         updateInterval = setInterval(() => { renderSchedule(); updateNextCourse(); }, 60000);
       } catch (err) {
@@ -536,7 +633,7 @@
             <div class="course-item ${isCurrent?'current':''}">
               <div class="course-time"><span class="period">${escapeHtml(formatPeriod(c.period))}</span><span class="time">${escapeHtml(getTimeText(c.period))}</span></div>
               <div class="course-info" data-type="${escapeHtml(c.type||'')}">
-                <div class="course-name">${escapeHtml(c.name)}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
+                <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
                 <div class="course-meta">${c.location?escapeHtml(`📍${c.location}`):''}${c.teacher?escapeHtml(` | 👤${c.teacher}`):''}</div>
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
                 ${isEditMode?`<div class="course-actions"><button onclick="editCourse('${escapeHtml(c.id)}')">✏️</button><button onclick="deleteCourse('${escapeHtml(c.id)}')">🗑️</button></div>`:''}
@@ -657,12 +754,14 @@
     function setupListeners() {
       document.querySelectorAll('.day-tab').forEach(t => t.onclick = () => { currentDay = t.dataset.day; document.querySelectorAll('.day-tab').forEach(x => x.classList.remove('active')); t.classList.add('active'); renderSchedule(); });
       document.querySelectorAll('.color-option').forEach(o => o.onclick = () => { document.querySelectorAll('.color-option').forEach(x => x.classList.remove('selected')); o.classList.add('selected'); });
-      ['courseModal','settingsModal','passwordModal'].forEach(id => {
+      const makeupCb = document.getElementById('courseMakeup');
+      if (makeupCb) makeupCb.addEventListener('change', toggleMakeupMode);
+      ['courseModal','settingsModal','passwordModal','annManageModal'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           el.onclick = e => { 
             if(e.target.id === id) {
-              const closeFn = window['close'+id.replace('Modal','').replace('course','Course').replace('settings','Settings').replace('password','Password')+'Modal'];
+              const closeFn = window['close'+id.replace('Modal','').replace('course','Course').replace('settings','Settings').replace('password','Password').replace('annManage','AnnManage')+'Modal'];
               if (typeof closeFn === 'function') closeFn();
             }
           };
@@ -806,6 +905,9 @@
       document.getElementById('courseEndWeek').value = totalWeeks;
       document.getElementById('courseWeekType').value = 'all';
       document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
+      // 重置补课模式
+      const makeupCb = document.getElementById('courseMakeup');
+      if (makeupCb) { makeupCb.checked = false; toggleMakeupMode(); }
       document.getElementById('courseModal').classList.add('active');
       // 隐藏下一节课卡片，避免遮挡弹窗底部
       const nextCourse = document.getElementById('nextCourse');
@@ -837,6 +939,7 @@
       }
       
       const type = document.querySelector('.color-option.selected')?.dataset.type || '';
+      const isMakeup = document.getElementById('courseMakeup')?.checked || false;
       const course = {
         id: editingCourseId || Date.now().toString() + Math.random().toString(36).substr(2, 5),
         name, period, day,
@@ -845,7 +948,8 @@
         type,
         startWeek: +document.getElementById('courseStartWeek').value,
         endWeek: +document.getElementById('courseEndWeek').value,
-        weekType: document.getElementById('courseWeekType').value
+        weekType: document.getElementById('courseWeekType').value,
+        isMakeup
       };
       
       if (editingCourseId) {
@@ -879,6 +983,12 @@
       document.getElementById('courseStartWeek').value = c.startWeek || 1;
       document.getElementById('courseEndWeek').value = c.endWeek || totalWeeks;
       document.getElementById('courseWeekType').value = c.weekType || 'all';
+      // 恢复补课模式状态：优先使用持久化的 isMakeup，兼容旧数据时再回退到启发式判断
+      const isMakeup = Object.prototype.hasOwnProperty.call(c, 'isMakeup')
+        ? !!c.isMakeup
+        : c.startWeek === c.endWeek && c.weekType === 'all';
+      const makeupCb = document.getElementById('courseMakeup');
+      if (makeupCb) { makeupCb.checked = isMakeup; toggleMakeupMode(); }
       document.querySelectorAll('.color-option').forEach(o => o.classList.toggle('selected', o.dataset.type === (c.type || '')));
       document.getElementById('courseModal').classList.add('active');
     }
@@ -980,6 +1090,206 @@
       toast.textContent = msg;
       toast.className = 'toast show ' + type;
       setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // ===== 公告系统 =====
+    let currentAnnouncements = [];
+    let currentAnnIndex = 0;
+
+    async function loadAnnouncements() {
+      try {
+        const res = await fetch('/api/announcements/active');
+        const data = await res.json();
+        currentAnnouncements = (data.announcements || []).filter(a => !isAnnDismissed(a.id));
+        currentAnnIndex = 0;
+        if (currentAnnouncements.length > 0) {
+          showAnnouncement(currentAnnouncements[0]);
+        }
+      } catch (err) {
+        console.error('加载公告失败:', err);
+      }
+    }
+
+    function showAnnouncement(ann) {
+      const modal = document.getElementById('announcementModal');
+      const title = document.getElementById('annTitle');
+      const content = document.getElementById('annContent');
+      const dateEl = document.getElementById('annDate');
+      if (!modal || !title || !content) return;
+      title.textContent = ann.title || '公告';
+      content.textContent = ann.content || '';
+      const range = [];
+      if (ann.startDate) range.push(`生效：${ann.startDate}`);
+      if (ann.endDate) range.push(`截止：${ann.endDate}`);
+      dateEl.textContent = range.join(' ｜ ');
+      modal.classList.add('active');
+    }
+
+    function dismissAnnouncement() {
+      document.getElementById('announcementModal').classList.remove('active');
+      currentAnnIndex++;
+      if (currentAnnIndex < currentAnnouncements.length) {
+        setTimeout(() => showAnnouncement(currentAnnouncements[currentAnnIndex]), 300);
+      }
+    }
+
+    function dontShowAgain() {
+      const ann = currentAnnouncements[currentAnnIndex];
+      if (ann) {
+        const dismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
+        if (!dismissed.includes(ann.id)) dismissed.push(ann.id);
+        localStorage.setItem('dismissedAnnouncements', JSON.stringify(dismissed));
+      }
+      dismissAnnouncement();
+    }
+
+    function isAnnDismissed(id) {
+      const dismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
+      return dismissed.includes(id);
+    }
+
+    // ===== 公告管理 =====
+    function openAnnManageModal() {
+      document.getElementById('annManageModal').classList.add('active');
+      resetAnnEditForm();
+      renderAnnList();
+    }
+
+    function closeAnnManageModal() {
+      document.getElementById('annManageModal').classList.remove('active');
+    }
+
+    function resetAnnEditForm() {
+      document.getElementById('annEditId').value = '';
+      document.getElementById('annEditTitle').value = '';
+      document.getElementById('annEditContent').value = '';
+      document.getElementById('annEditStart').value = '';
+      document.getElementById('annEditEnd').value = '';
+      document.getElementById('annEditEnabled').checked = true;
+    }
+
+    async function renderAnnList() {
+      const container = document.getElementById('annListContainer');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/announcements');
+        const data = await res.json();
+        const list = data.announcements || [];
+        if (list.length === 0) {
+          container.innerHTML = '<div style="text-align:center;color:var(--gray-400);padding:20px;">暂无公告</div>';
+          return;
+        }
+        container.innerHTML = list.map(a => {
+          const range = [];
+          if (a.startDate) range.push(a.startDate);
+          if (a.endDate) range.push(a.endDate);
+          const rangeStr = range.length ? range.join(' ~ ') : '永久有效';
+          const isEnabled = a.enabled !== false;
+          return `
+            <div class="ann-list-item ${isEnabled ? '' : 'disabled'}">
+              <div class="ann-list-title">${escapeHtml(a.title)} ${isEnabled ? '' : '<span style="color:var(--gray-400);">(已禁用)</span>'}</div>
+              <div class="ann-list-meta">${rangeStr}</div>
+              <div class="ann-list-actions">
+                <button class="ann-btn-edit" onclick='editAnnouncement(${JSON.stringify(a).replace(/'/g, "&#39;")})'>编辑</button>
+                <button class="ann-btn-del" onclick="deleteAnnouncement('${escapeHtml(a.id)}')">删除</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('加载公告列表失败:', err);
+      }
+    }
+
+    function editAnnouncement(ann) {
+      document.getElementById('annEditId').value = ann.id;
+      document.getElementById('annEditTitle').value = ann.title || '';
+      document.getElementById('annEditContent').value = ann.content || '';
+      document.getElementById('annEditStart').value = ann.startDate || '';
+      document.getElementById('annEditEnd').value = ann.endDate || '';
+      document.getElementById('annEditEnabled').checked = ann.enabled !== false;
+    }
+
+    async function saveAnnouncement() {
+      const id = document.getElementById('annEditId').value;
+      const announcement = {
+        id: id || undefined,
+        title: document.getElementById('annEditTitle').value.trim(),
+        content: document.getElementById('annEditContent').value.trim(),
+        startDate: document.getElementById('annEditStart').value || undefined,
+        endDate: document.getElementById('annEditEnd').value || undefined,
+        enabled: document.getElementById('annEditEnabled').checked
+      };
+      if (!announcement.title || !announcement.content) {
+        showToast('标题和内容不能为空', 'error');
+        return;
+      }
+      try {
+        const res = await fetch('/api/announcements', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({password: editPassword, announcement})
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('公告已保存', 'success');
+          resetAnnEditForm();
+          renderAnnList();
+        } else {
+          showToast(data.error || '保存失败', 'error');
+        }
+      } catch (err) {
+        console.error('保存公告失败:', err);
+        showToast('网络错误', 'error');
+      }
+    }
+
+    async function deleteAnnouncement(id) {
+      if (!confirm('确定删除这条公告？')) return;
+      try {
+        const res = await fetch(`/api/announcements/${id}`, {
+          method: 'DELETE',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({password: editPassword})
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('公告已删除', 'success');
+          renderAnnList();
+        } else {
+          showToast(data.error || '删除失败', 'error');
+        }
+      } catch (err) {
+        console.error('删除公告失败:', err);
+        showToast('网络错误', 'error');
+      }
+    }
+
+    // ===== 单周补课 =====
+    function toggleMakeupMode() {
+      const checkbox = document.getElementById('courseMakeup');
+      const hint = document.getElementById('makeupHint');
+      const weekNum = document.getElementById('makeupWeekNum');
+      const startSel = document.getElementById('courseStartWeek');
+      const endSel = document.getElementById('courseEndWeek');
+      const weekType = document.getElementById('courseWeekType');
+      if (!checkbox || !hint) return;
+      if (checkbox.checked) {
+        const currentWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek() + currentWeekOffset));
+        if (weekNum) weekNum.textContent = currentWeek;
+        hint.style.display = 'block';
+        if (startSel) startSel.value = currentWeek;
+        if (endSel) endSel.value = currentWeek;
+        if (weekType) weekType.value = 'all';
+        startSel.disabled = true;
+        endSel.disabled = true;
+        weekType.disabled = true;
+      } else {
+        hint.style.display = 'none';
+        startSel.disabled = false;
+        endSel.disabled = false;
+        weekType.disabled = false;
+      }
     }
 
     // 页面卸载时清理定时器

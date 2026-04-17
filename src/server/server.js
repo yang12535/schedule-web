@@ -43,7 +43,8 @@ const defaultSchedule = {
   name: CLASS_NAME, description: CLASS_DESC, semesterStart: SEMESTER_START,
   updatedAt: new Date().toISOString(), totalPeriods: 12, totalWeeks: 16,
   periodSettings: defaultPeriods,
-  courses: {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]}
+  courses: {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]},
+  announcements: []
 };
 
 app.use(express.json());
@@ -164,6 +165,102 @@ app.post('/api/verify', async (req, res) => {
   } catch (err) {
     console.error('验证密码失败:', err);
     res.status(500).json({error:'Verification failed'});
+  }
+});
+
+// 获取当前有效的公告列表
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+app.get('/api/announcements/active', async (req, res) => {
+  try {
+    const schedule = await loadSchedule();
+    const today = formatLocalDate(new Date());
+    const active = (schedule.announcements || []).filter(a => {
+      if (a.enabled === false) return false;
+      if (a.startDate && today < a.startDate) return false;
+      if (a.endDate && today > a.endDate) return false;
+      return true;
+    });
+    res.json({announcements: active});
+  } catch (err) {
+    console.error('获取公告失败:', err);
+    res.status(500).json({error:'Failed to load announcements'});
+  }
+});
+
+// 获取所有公告（管理用）
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const schedule = await loadSchedule();
+    res.json({announcements: schedule.announcements || []});
+  } catch (err) {
+    console.error('获取公告失败:', err);
+    res.status(500).json({error:'Failed to load announcements'});
+  }
+});
+
+// 添加/更新公告
+app.post('/api/announcements', async (req, res) => {
+  try {
+    const {password, announcement} = req.body;
+    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+      await logToFile(`密码错误尝试 - 公告更新`);
+      return res.status(403).json({error:'密码错误'});
+    }
+    if (!announcement || typeof announcement !== 'object' || !announcement.title || !announcement.content) {
+      return res.status(400).json({error:'标题和内容不能为空'});
+    }
+    const schedule = await loadSchedule();
+    if (!schedule.announcements) schedule.announcements = [];
+    if (announcement.id) {
+      const idx = schedule.announcements.findIndex(a => a.id === announcement.id);
+      if (idx >= 0) {
+        schedule.announcements[idx] = {...schedule.announcements[idx], ...announcement};
+      } else {
+        schedule.announcements.push(announcement);
+      }
+    } else {
+      announcement.id = Date.now().toString() + Math.random().toString(36).slice(2, 5);
+      schedule.announcements.push(announcement);
+    }
+    schedule.updatedAt = new Date().toISOString();
+    await saveSchedule(schedule);
+    await logToFile(`公告已更新: ${announcement.title}`);
+    res.json({success:true, announcement});
+  } catch (err) {
+    console.error('保存公告失败:', err);
+    res.status(500).json({error:'Failed to save announcement'});
+  }
+});
+
+// 删除公告
+app.delete('/api/announcements/:id', async (req, res) => {
+  try {
+    const {password} = req.body;
+    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+      await logToFile(`密码错误尝试 - 公告删除`);
+      return res.status(403).json({error:'密码错误'});
+    }
+    const id = req.params.id;
+    const schedule = await loadSchedule();
+    if (!schedule.announcements) schedule.announcements = [];
+    const beforeLen = schedule.announcements.length;
+    schedule.announcements = schedule.announcements.filter(a => a.id !== id);
+    if (schedule.announcements.length === beforeLen) {
+      return res.status(404).json({error:'Announcement not found'});
+    }
+    schedule.updatedAt = new Date().toISOString();
+    await saveSchedule(schedule);
+    await logToFile(`公告已删除: ${id}`);
+    res.json({success:true});
+  } catch (err) {
+    console.error('删除公告失败:', err);
+    res.status(500).json({error:'Failed to delete announcement'});
   }
 });
 
