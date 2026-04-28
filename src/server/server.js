@@ -12,19 +12,80 @@ function generatePassword() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// 保存日志到文件
-async function logToFile(message) {
-  try {
-    await fs.mkdir(LOG_DIR, { recursive: true });
-    const date = new Date();
-    const dateStr = date.toISOString().split('T')[0];
-    const logFile = path.join(LOG_DIR, `schedule-${dateStr}.log`);
-    const timeStr = date.toLocaleString('zh-CN');
-    const logLine = `[${timeStr}] ${message}\n`;
-    await fs.appendFile(logFile, logLine);
-  } catch (err) {
-    console.error('日志写入失败:', err.message);
+// 输入验证工具函数
+function isValidDateString(str) {
+  if (!str || typeof str !== 'string') return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(new Date(str).getTime());
+}
+
+function isValidTimeString(str) {
+  if (!str || typeof str !== 'string') return false;
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(str);
+}
+
+function isValidPeriodSettings(arr) {
+  if (!Array.isArray(arr) || arr.length > 20) return false;
+  for (const p of arr) {
+    if (!isValidTimeString(p.startTime) || typeof p.duration !== 'number' || p.duration < 1 || p.duration > 300) {
+      return false;
+    }
   }
+  return true;
+}
+
+// 内存级速率限制
+const rateLimitStore = new Map();
+
+function createRateLimiter(maxRequests, windowMs, keyFn) {
+  return (req, res, next) => {
+    const key = keyFn(req);
+    const now = Date.now();
+    const entry = rateLimitStore.get(key) || { count: 0, startTime: now };
+    if (now - entry.startTime > windowMs) {
+      entry.count = 1;
+      entry.startTime = now;
+    } else {
+      entry.count++;
+    }
+    rateLimitStore.set(key, entry);
+    if (entry.count > maxRequests) {
+      return res.status(429).json({ error: 'Too many requests, please try again later' });
+    }
+    next();
+  };
+}
+
+const strictRateLimit = createRateLimiter(10, 60 * 1000, req => {
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown').replace(/[\r\n]/g, '');
+  return `${ip}:${req.path}`;
+});
+
+const generalRateLimit = createRateLimiter(200, 15 * 60 * 1000, req => {
+  return (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown').replace(/[\r\n]/g, '');
+});
+
+// 保存日志到文件
+const pendingLogs = new Set();
+
+async function logToFile(message) {
+  // 防御日志注入：将换行符替换为空格
+  const safeMessage = String(message).replace(/[\r\n]/g, ' ');
+  const promise = (async () => {
+    try {
+      await fs.mkdir(LOG_DIR, { recursive: true });
+      const date = new Date();
+      const dateStr = date.toISOString().split('T')[0];
+      const logFile = path.join(LOG_DIR, `schedule-${dateStr}.log`);
+      const timeStr = date.toLocaleString('zh-CN');
+      const logLine = `[${timeStr}] ${safeMessage}\n`;
+      await fs.appendFile(logFile, logLine);
+    } catch (err) {
+      console.error('日志写入失败:', err.message);
+    }
+  })();
+  pendingLogs.add(promise);
+  promise.finally(() => pendingLogs.delete(promise));
+  return promise;
 }
 
 // Config
@@ -47,38 +108,73 @@ const defaultSchedule = {
   announcements: []
 };
 
+let scheduleCache = null;
+
 app.use(express.json());
 
 // 静态文件路径 - 支持两种部署方式
 const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
 app.use(express.static(publicPath));
 
+// 安全响应头
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// 通用速率限制
+app.use(generalRateLimit);
+
 // 请求日志中间件
-app.use(async (req, res, next) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  await logToFile(`${req.method} ${req.url} - IP: ${ip}`);
+app.use((req, res, next) => {
+  let ip = req.socket.remoteAddress || 'unknown';
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded && typeof forwarded === 'string') {
+    const firstIp = forwarded.split(',')[0].trim().replace(/[\r\n]/g, '');
+    if (/^[\d.a-fA-F:]+$/.test(firstIp)) {
+      ip = firstIp;
+    }
+  }
+  logToFile(`${req.method} ${req.url} - IP: ${ip}`);
   next();
 });
 
 async function loadSchedule() {
+  if (scheduleCache !== null) {
+    return scheduleCache;
+  }
   try {
     const content = await fs.readFile(DATA_FILE, 'utf8');
     if (!content || content.trim() === '') {
       console.log('数据文件为空，使用默认配置');
-      return {...defaultSchedule};
+      scheduleCache = {...defaultSchedule};
+      return scheduleCache;
     }
     const data = JSON.parse(content);
-    return {...defaultSchedule, ...data, periodSettings: data.periodSettings || defaultPeriods};
+    scheduleCache = {...defaultSchedule, ...data, periodSettings: data.periodSettings || defaultPeriods};
+    return scheduleCache;
   } catch (err) {
     if (err.code === 'ENOENT') {
       console.log('数据文件不存在，使用默认配置');
+      scheduleCache = {...defaultSchedule};
+      return scheduleCache;
     } else if (err instanceof SyntaxError) {
       console.error('数据文件格式错误:', err.message);
       await logToFile(`数据文件格式错误: ${err.message}`);
+      const backupFile = `${DATA_FILE}.corrupted.${Date.now()}`;
+      try {
+        await fs.rename(DATA_FILE, backupFile);
+        console.log(`已备份损坏文件到: ${backupFile}`);
+      } catch (backupErr) {
+        console.error('备份损坏文件失败:', backupErr.message);
+      }
+      throw err;
     } else {
       console.error('加载数据失败:', err.message);
+      throw err;
     }
-    return {...defaultSchedule};
   }
 }
 
@@ -89,6 +185,7 @@ async function saveSchedule(data) {
     await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
     await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
     await fs.rename(tempFile, DATA_FILE);
+    scheduleCache = data;
   } catch (err) {
     // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
     try { await fs.unlink(tempFile); } catch (e) { if (e.code !== 'ENOENT') console.error('清理临时文件失败:', e.message); }
@@ -107,7 +204,7 @@ app.get('/api/schedule', async (req, res) => {
   }
 });
 
-app.put('/api/schedule/courses', async (req, res) => {
+app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
   try {
     const {password, courses} = req.body;
     if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
@@ -132,7 +229,7 @@ app.put('/api/schedule/courses', async (req, res) => {
   }
 });
 
-app.put('/api/schedule/settings', async (req, res) => {
+app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
   try {
     const {password, name, description, semesterStart, totalPeriods, totalWeeks, periodSettings} = req.body;
     if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
@@ -140,12 +237,12 @@ app.put('/api/schedule/settings', async (req, res) => {
       return res.status(403).json({error:'密码错误'});
     }
     const schedule = await loadSchedule();
-    if (name !== undefined) schedule.name = name;
-    if (description !== undefined) schedule.description = description;
-    if (semesterStart) schedule.semesterStart = semesterStart;
-    if (totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
-    if (totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
-    if (periodSettings?.length >= 1) schedule.periodSettings = periodSettings;
+    if (name !== undefined) schedule.name = String(name).slice(0, 100);
+    if (description !== undefined) schedule.description = String(description).slice(0, 200);
+    if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
+    if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
+    if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
+    if (periodSettings && isValidPeriodSettings(periodSettings)) schedule.periodSettings = periodSettings;
     schedule.updatedAt = new Date().toISOString();
     await saveSchedule(schedule);
     await logToFile(`设置已更新: ${name || schedule.name}`);
@@ -156,7 +253,7 @@ app.put('/api/schedule/settings', async (req, res) => {
   }
 });
 
-app.post('/api/verify', async (req, res) => {
+app.post('/api/verify', strictRateLimit, async (req, res) => {
   try {
     const {password} = req.body;
     const valid = !EDIT_PASSWORD || password === EDIT_PASSWORD;
@@ -205,7 +302,7 @@ app.get('/api/announcements', async (req, res) => {
 });
 
 // 添加/更新公告
-app.post('/api/announcements', async (req, res) => {
+app.post('/api/announcements', strictRateLimit, async (req, res) => {
   try {
     const {password, announcement} = req.body;
     if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
@@ -214,6 +311,12 @@ app.post('/api/announcements', async (req, res) => {
     }
     if (!announcement || typeof announcement !== 'object' || !announcement.title || !announcement.content) {
       return res.status(400).json({error:'标题和内容不能为空'});
+    }
+    if (announcement.startDate && !isValidDateString(announcement.startDate)) {
+      return res.status(400).json({error:'Invalid startDate format'});
+    }
+    if (announcement.endDate && !isValidDateString(announcement.endDate)) {
+      return res.status(400).json({error:'Invalid endDate format'});
     }
     const schedule = await loadSchedule();
     if (!schedule.announcements) schedule.announcements = [];
@@ -239,7 +342,7 @@ app.post('/api/announcements', async (req, res) => {
 });
 
 // 删除公告
-app.delete('/api/announcements/:id', async (req, res) => {
+app.delete('/api/announcements/:id', strictRateLimit, async (req, res) => {
   try {
     const {password} = req.body;
     if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
@@ -319,7 +422,7 @@ function migrateOldData(data) {
   return migrated;
 }
 
-app.post('/api/import', async (req, res) => {
+app.post('/api/import', strictRateLimit, async (req, res) => {
   try {
     const {password, data} = req.body;
     if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
@@ -338,12 +441,12 @@ app.post('/api/import', async (req, res) => {
     
     const schedule = await loadSchedule();
     schedule.courses = migratedData.courses;
-    if (migratedData.semesterStart) schedule.semesterStart = migratedData.semesterStart;
-    if (migratedData.name) schedule.name = migratedData.name;
-    if (migratedData.description !== undefined) schedule.description = migratedData.description;
-    if (migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
-    if (migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
-    if (migratedData.periodSettings?.length >= 1) schedule.periodSettings = migratedData.periodSettings;
+    if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) schedule.semesterStart = migratedData.semesterStart;
+    if (migratedData.name) schedule.name = String(migratedData.name).slice(0, 100);
+    if (migratedData.description !== undefined) schedule.description = String(migratedData.description).slice(0, 200);
+    if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
+    if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
+    if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) schedule.periodSettings = migratedData.periodSettings;
     schedule.updatedAt = new Date().toISOString();
     await saveSchedule(schedule);
     await logToFile(`数据导入成功`);
@@ -419,6 +522,8 @@ async function init() {
       console.log('初始化数据文件...');
       await saveSchedule(defaultSchedule); 
     }
+    // 启动时加载数据到缓存
+    await loadSchedule();
   } catch (err) { 
     console.error('Init error:', err);
     // 不抛出错误，让服务继续启动
@@ -437,13 +542,19 @@ init().then(() => {
 日志目录: ${LOG_DIR}
 静态文件: ${publicPath}
 ----------------------------------------
-${EDIT_PASSWORD ? `🔒 编辑密码: ${EDIT_PASSWORD}` : '🔓 编辑模式: 无需密码'}
+${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密码'}
 ========================================
     `;
     console.log(banner);
-    logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码: ${EDIT_PASSWORD || '无'}`);
+    logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
   });
 }).catch(err => {
   console.error('服务启动失败:', err);
   process.exit(1);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('收到 SIGTERM，等待日志写入完成...');
+  await Promise.all(pendingLogs);
+  process.exit(0);
 });
