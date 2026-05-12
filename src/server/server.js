@@ -447,8 +447,8 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
       newSchedule.updatedAt = new Date().toISOString();
       await saveSchedule(newSchedule);
     });
-    await logToFile(`公告已更新: ${announcement.title}`);
-    res.json({success:true, announcement});
+    await logToFile(`公告已更新: ${sanitizedAnnouncement.title}`);
+    res.json({success:true, announcement: sanitizedAnnouncement});
   } catch (err) {
     console.error('保存公告失败:', err);
     res.status(500).json({error:'Failed to save announcement'});
@@ -590,7 +590,8 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
           title: a.title,
           content: a.content,
           startDate: a.startDate || null,
-          endDate: a.endDate || null
+          endDate: a.endDate || null,
+          enabled: typeof a.enabled === 'boolean' ? a.enabled : true
         }));
       }
       newSchedule.updatedAt = new Date().toISOString();
