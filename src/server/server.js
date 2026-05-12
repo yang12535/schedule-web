@@ -13,6 +13,13 @@ function generatePassword() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
 // 输入验证工具函数
 function isValidDateString(str) {
   if (!str || typeof str !== 'string') return false;
@@ -30,6 +37,15 @@ function isValidPeriodSettings(arr) {
     if (!isValidTimeString(p.startTime) || !Number.isInteger(p.duration) || p.duration < 1 || p.duration > 300) {
       return false;
     }
+  }
+  return true;
+}
+
+function isValidCourses(courses) {
+  if (!courses || typeof courses !== 'object' || Array.isArray(courses)) return false;
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+  for (const day of days) {
+    if (!Array.isArray(courses[day])) return false;
   }
   return true;
 }
@@ -281,7 +297,7 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : schedule.totalPeriods;
       if (periodSettings && isValidPeriodSettings(periodSettings)) {
         if (periodSettings.length !== newTotalPeriods) {
-          throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+          throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
       }
       if (name !== undefined) schedule.name = String(name).slice(0, 100);
@@ -413,7 +429,7 @@ app.delete('/api/announcements/:id', strictRateLimit, async (req, res) => {
       const beforeLen = schedule.announcements.length;
       schedule.announcements = schedule.announcements.filter(a => a.id !== id);
       if (schedule.announcements.length === beforeLen) {
-        throw { status: 404, message: 'Announcement not found' };
+        throw new HttpError(404, 'Announcement not found');
       }
       schedule.updatedAt = new Date().toISOString();
       await saveSchedule(schedule);
@@ -507,8 +523,11 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
       const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : schedule.totalPeriods;
       if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) {
         if (migratedData.periodSettings.length !== newTotalPeriods) {
-          throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+          throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
+      }
+      if (!isValidCourses(migratedData.courses)) {
+        throw new HttpError(400, 'Invalid courses structure');
       }
       schedule.courses = migratedData.courses;
       if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) schedule.semesterStart = migratedData.semesterStart;
@@ -619,7 +638,7 @@ async function init() {
       await fs.access(DATA_FILE); 
     } catch { 
       console.log('初始化数据文件...');
-      await saveSchedule(defaultSchedule); 
+      await saveSchedule(createDefaultSchedule()); 
     }
     // 启动时加载数据到缓存
     await loadSchedule();
@@ -641,12 +660,16 @@ init().then(() => {
 日志目录: ${LOG_DIR}
 静态文件: ${publicPath}
 ----------------------------------------
-${EDIT_PASSWORD ? (process.env.EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : `🔒 编辑密码: ${EDIT_PASSWORD}`) : '🔓 编辑模式: 无需密码'}
+${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密码'}
 ========================================
     `;
     console.log(banner);
     if (!process.env.EDIT_PASSWORD && EDIT_PASSWORD) {
-      console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
+      if (process.env.PRINT_EDIT_PASSWORD === 'true') {
+        console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
+      } else {
+        console.log('🔑 编辑密码已自动生成（设置 PRINT_EDIT_PASSWORD=true 可在日志中查看）');
+      }
     }
     logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
   });
