@@ -41,12 +41,34 @@ function isValidPeriodSettings(arr) {
   return true;
 }
 
+function isValidCourse(course) {
+  if (!course || typeof course !== 'object') return false;
+  if (typeof course.name !== 'string' || !course.name.trim() || course.name.length > 100) return false;
+  if (course.location && (typeof course.location !== 'string' || course.location.length > 100)) return false;
+  if (course.teacher && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
+  if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
+  if (course.type && typeof course.type !== 'string') return false;
+  return true;
+}
+
 function isValidCourses(courses) {
   if (!courses || typeof courses !== 'object' || Array.isArray(courses)) return false;
   const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
   for (const day of days) {
     if (!Array.isArray(courses[day])) return false;
+    for (const course of courses[day]) {
+      if (!isValidCourse(course)) return false;
+    }
   }
+  return true;
+}
+
+function isValidAnnouncement(a) {
+  if (!a || typeof a !== 'object') return false;
+  if (typeof a.title !== 'string' || !a.title.trim() || a.title.length > 100) return false;
+  if (typeof a.content !== 'string' || !a.content.trim() || a.content.length > 2000) return false;
+  if (a.startDate && !isValidDateString(a.startDate)) return false;
+  if (a.endDate && !isValidDateString(a.endDate)) return false;
   return true;
 }
 
@@ -272,9 +294,10 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
     
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
-      schedule.courses = courses;
-      schedule.updatedAt = new Date().toISOString();
-      await saveSchedule(schedule);
+      const newSchedule = JSON.parse(JSON.stringify(schedule));
+      newSchedule.courses = courses;
+      newSchedule.updatedAt = new Date().toISOString();
+      await saveSchedule(newSchedule);
     });
     await logToFile(`课程数据已更新`);
     res.json({success:true});
@@ -293,25 +316,25 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
     }
     const updatedName = await withSaveLock(async () => {
       const schedule = await loadSchedule();
-      // 先校验一致性
-      const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : schedule.totalPeriods;
+      const newSchedule = JSON.parse(JSON.stringify(schedule));
+      const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : newSchedule.totalPeriods;
       if (periodSettings && isValidPeriodSettings(periodSettings)) {
         if (periodSettings.length !== newTotalPeriods) {
           throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
+        newSchedule.periodSettings = periodSettings;
       }
-      if (name !== undefined) schedule.name = String(name).slice(0, 100);
-      if (description !== undefined) schedule.description = String(description).slice(0, 200);
-      if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
-      if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
-      if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
-      if (periodSettings && isValidPeriodSettings(periodSettings)) schedule.periodSettings = periodSettings;
-      if (schedule.periodSettings.length !== schedule.totalPeriods) {
-        throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+      if (name !== undefined) newSchedule.name = String(name).slice(0, 100);
+      if (description !== undefined) newSchedule.description = String(description).slice(0, 200);
+      if (semesterStart && isValidDateString(semesterStart)) newSchedule.semesterStart = semesterStart;
+      if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) newSchedule.totalPeriods = totalPeriods;
+      if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) newSchedule.totalWeeks = totalWeeks;
+      if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
+        throw new HttpError(400, 'periodSettings length does not match totalPeriods');
       }
-      schedule.updatedAt = new Date().toISOString();
-      await saveSchedule(schedule);
-      return schedule.name;
+      newSchedule.updatedAt = new Date().toISOString();
+      await saveSchedule(newSchedule);
+      return newSchedule.name;
     });
     await logToFile(`设置已更新: ${name || updatedName}`);
     res.json({success:true});
@@ -389,22 +412,26 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
     if (announcement.endDate && !isValidDateString(announcement.endDate)) {
       return res.status(400).json({error:'Invalid endDate format'});
     }
+    if (!isValidAnnouncement(announcement)) {
+      return res.status(400).json({error:'标题或内容格式不正确'});
+    }
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
-      if (!schedule.announcements) schedule.announcements = [];
+      const newSchedule = JSON.parse(JSON.stringify(schedule));
+      if (!newSchedule.announcements) newSchedule.announcements = [];
       if (announcement.id) {
-        const idx = schedule.announcements.findIndex(a => a.id === announcement.id);
+        const idx = newSchedule.announcements.findIndex(a => a.id === announcement.id);
         if (idx >= 0) {
-          schedule.announcements[idx] = {...schedule.announcements[idx], ...announcement};
+          newSchedule.announcements[idx] = {...newSchedule.announcements[idx], ...announcement};
         } else {
-          schedule.announcements.push(announcement);
+          newSchedule.announcements.push(announcement);
         }
       } else {
         announcement.id = Date.now().toString() + crypto.randomBytes(4).toString('hex');
-        schedule.announcements.push(announcement);
+        newSchedule.announcements.push(announcement);
       }
-      schedule.updatedAt = new Date().toISOString();
-      await saveSchedule(schedule);
+      newSchedule.updatedAt = new Date().toISOString();
+      await saveSchedule(newSchedule);
     });
     await logToFile(`公告已更新: ${announcement.title}`);
     res.json({success:true, announcement});
@@ -519,36 +546,36 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
-      // 先校验一致性
-      const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : schedule.totalPeriods;
+      const newSchedule = JSON.parse(JSON.stringify(schedule));
+      const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : newSchedule.totalPeriods;
       if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) {
         if (migratedData.periodSettings.length !== newTotalPeriods) {
           throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
+        newSchedule.periodSettings = migratedData.periodSettings;
       }
       if (!isValidCourses(migratedData.courses)) {
         throw new HttpError(400, 'Invalid courses structure');
       }
-      schedule.courses = migratedData.courses;
-      if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) schedule.semesterStart = migratedData.semesterStart;
-      if (migratedData.name) schedule.name = String(migratedData.name).slice(0, 100);
-      if (migratedData.description !== undefined) schedule.description = String(migratedData.description).slice(0, 200);
-      if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
-      if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
-      if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) schedule.periodSettings = migratedData.periodSettings;
-      if (schedule.periodSettings.length !== schedule.totalPeriods) {
-        throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+      newSchedule.courses = migratedData.courses;
+      if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) newSchedule.semesterStart = migratedData.semesterStart;
+      if (migratedData.name) newSchedule.name = String(migratedData.name).slice(0, 100);
+      if (migratedData.description !== undefined) newSchedule.description = String(migratedData.description).slice(0, 200);
+      if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) newSchedule.totalPeriods = migratedData.totalPeriods;
+      if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) newSchedule.totalWeeks = migratedData.totalWeeks;
+      if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
+        throw new HttpError(400, 'periodSettings length does not match totalPeriods');
       }
       if (Array.isArray(migratedData.announcements)) {
-        schedule.announcements = migratedData.announcements.filter(a => {
+        newSchedule.announcements = migratedData.announcements.filter(a => {
           return a && typeof a === 'object' && typeof a.title === 'string' && a.title.trim();
         }).map(a => ({
           ...a,
           id: (typeof a.id === 'string' && a.id.trim()) ? a.id.trim() : Date.now().toString() + crypto.randomBytes(4).toString('hex')
         }));
       }
-      schedule.updatedAt = new Date().toISOString();
-      await saveSchedule(schedule);
+      newSchedule.updatedAt = new Date().toISOString();
+      await saveSchedule(newSchedule);
     });
     await logToFile(`数据导入成功`);
     const resultSchedule = await loadSchedule();
