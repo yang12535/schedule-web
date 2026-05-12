@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,7 +10,7 @@ const LOG_DIR = process.env.LOG_DIR || '/data/logs';
 
 // 生成随机密码（6位数字）
 function generatePassword() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 }
 
 // 输入验证工具函数
@@ -26,7 +27,7 @@ function isValidTimeString(str) {
 function isValidPeriodSettings(arr) {
   if (!Array.isArray(arr) || arr.length > 20) return false;
   for (const p of arr) {
-    if (!isValidTimeString(p.startTime) || typeof p.duration !== 'number' || p.duration < 1 || p.duration > 300) {
+    if (!isValidTimeString(p.startTime) || !Number.isInteger(p.duration) || p.duration < 1 || p.duration > 300) {
       return false;
     }
   }
@@ -35,6 +36,16 @@ function isValidPeriodSettings(arr) {
 
 // 内存级速率限制
 const rateLimitStore = new Map();
+
+// TTL 清理：每5分钟清理过期的限流记录
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore) {
+    if (now - entry.startTime > 15 * 60 * 1000) {
+      rateLimitStore.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
 
 function createRateLimiter(maxRequests, windowMs, keyFn) {
   return (req, res, next) => {
@@ -55,13 +66,24 @@ function createRateLimiter(maxRequests, windowMs, keyFn) {
   };
 }
 
+function getClientIp(req) {
+  let ip = req.socket.remoteAddress || 'unknown';
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded && typeof forwarded === 'string') {
+    const firstIp = forwarded.split(',')[0].trim().replace(/[\r\n]/g, '');
+    if (/^[\d.a-fA-F:]+$/.test(firstIp)) {
+      ip = firstIp;
+    }
+  }
+  return ip.replace(/[\r\n]/g, '');
+}
+
 const strictRateLimit = createRateLimiter(10, 60 * 1000, req => {
-  const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown').replace(/[\r\n]/g, '');
-  return `${ip}:${req.path}`;
+  return `${getClientIp(req)}:${req.path}`;
 });
 
 const generalRateLimit = createRateLimiter(200, 15 * 60 * 1000, req => {
-  return (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown').replace(/[\r\n]/g, '');
+  return getClientIp(req);
 });
 
 // 保存日志到文件
@@ -91,7 +113,7 @@ async function logToFile(message) {
 // Config
 const CLASS_NAME = process.env.CLASS_NAME || '我的课表';
 const CLASS_DESC = process.env.CLASS_DESC || '';
-const EDIT_PASSWORD = process.env.EDIT_PASSWORD !== undefined ? process.env.EDIT_PASSWORD : generatePassword();
+const EDIT_PASSWORD = process.env.EDIT_PASSWORD ? process.env.EDIT_PASSWORD : generatePassword();
 const SEMESTER_START = process.env.SEMESTER_START || `${new Date().getFullYear()}-03-01`;
 
 const defaultPeriods = [
@@ -108,9 +130,13 @@ const defaultSchedule = {
   announcements: []
 };
 
+function createDefaultSchedule() {
+  return JSON.parse(JSON.stringify(defaultSchedule));
+}
+
 let scheduleCache = null;
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // 静态文件路径 - 支持两种部署方式
 const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
@@ -129,17 +155,20 @@ app.use(generalRateLimit);
 
 // 请求日志中间件
 app.use((req, res, next) => {
-  let ip = req.socket.remoteAddress || 'unknown';
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded && typeof forwarded === 'string') {
-    const firstIp = forwarded.split(',')[0].trim().replace(/[\r\n]/g, '');
-    if (/^[\d.a-fA-F:]+$/.test(firstIp)) {
-      ip = firstIp;
-    }
-  }
+  const ip = getClientIp(req);
   logToFile(`${req.method} ${req.url} - IP: ${ip}`);
   next();
 });
+
+// 写锁：将 load → modify → save 串行化
+let saveLock = Promise.resolve();
+function withSaveLock(fn) {
+  const next = saveLock.then(async () => {
+    return await fn();
+  });
+  saveLock = next.catch(() => {});
+  return next;
+}
 
 async function loadSchedule() {
   if (scheduleCache !== null) {
@@ -149,16 +178,16 @@ async function loadSchedule() {
     const content = await fs.readFile(DATA_FILE, 'utf8');
     if (!content || content.trim() === '') {
       console.log('数据文件为空，使用默认配置');
-      scheduleCache = {...defaultSchedule};
+      scheduleCache = createDefaultSchedule();
       return scheduleCache;
     }
     const data = JSON.parse(content);
-    scheduleCache = {...defaultSchedule, ...data, periodSettings: data.periodSettings || defaultPeriods};
+    scheduleCache = {...createDefaultSchedule(), ...data, periodSettings: data.periodSettings || defaultPeriods};
     return scheduleCache;
   } catch (err) {
     if (err.code === 'ENOENT') {
       console.log('数据文件不存在，使用默认配置');
-      scheduleCache = {...defaultSchedule};
+      scheduleCache = createDefaultSchedule();
       return scheduleCache;
     } else if (err instanceof SyntaxError) {
       console.error('数据文件格式错误:', err.message);
@@ -170,7 +199,8 @@ async function loadSchedule() {
       } catch (backupErr) {
         console.error('备份损坏文件失败:', backupErr.message);
       }
-      throw err;
+      scheduleCache = createDefaultSchedule();
+      return scheduleCache;
     } else {
       console.error('加载数据失败:', err.message);
       throw err;
@@ -213,14 +243,16 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
     }
     
     // 验证 courses 数据结构
-    if (!courses || typeof courses !== 'object') {
+    if (!courses || typeof courses !== 'object' || Array.isArray(courses)) {
       return res.status(400).json({error:'Invalid courses data'});
     }
     
-    const schedule = await loadSchedule();
-    schedule.courses = courses;
-    schedule.updatedAt = new Date().toISOString();
-    await saveSchedule(schedule);
+    await withSaveLock(async () => {
+      const schedule = await loadSchedule();
+      schedule.courses = courses;
+      schedule.updatedAt = new Date().toISOString();
+      await saveSchedule(schedule);
+    });
     await logToFile(`课程数据已更新`);
     res.json({success:true});
   } catch (err) {
@@ -236,18 +268,29 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       await logToFile(`密码错误尝试 - 设置更新`);
       return res.status(403).json({error:'密码错误'});
     }
-    const schedule = await loadSchedule();
-    if (name !== undefined) schedule.name = String(name).slice(0, 100);
-    if (description !== undefined) schedule.description = String(description).slice(0, 200);
-    if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
-    if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
-    if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
-    if (periodSettings && isValidPeriodSettings(periodSettings)) schedule.periodSettings = periodSettings;
-    schedule.updatedAt = new Date().toISOString();
-    await saveSchedule(schedule);
-    await logToFile(`设置已更新: ${name || schedule.name}`);
+    await withSaveLock(async () => {
+      const schedule = await loadSchedule();
+      if (name !== undefined) schedule.name = String(name).slice(0, 100);
+      if (description !== undefined) schedule.description = String(description).slice(0, 200);
+      if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
+      const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : schedule.totalPeriods;
+      if (periodSettings && isValidPeriodSettings(periodSettings)) {
+        if (periodSettings.length !== newTotalPeriods) {
+          throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+        }
+        schedule.periodSettings = periodSettings;
+      }
+      if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
+      if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
+      schedule.updatedAt = new Date().toISOString();
+      await saveSchedule(schedule);
+    });
+    await logToFile(`设置已更新: ${name || (await loadSchedule()).name}`);
     res.json({success:true});
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({error: err.message});
+    }
     console.error('保存设置失败:', err);
     res.status(500).json({error:'Failed to save'});
   }
@@ -318,21 +361,23 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
     if (announcement.endDate && !isValidDateString(announcement.endDate)) {
       return res.status(400).json({error:'Invalid endDate format'});
     }
-    const schedule = await loadSchedule();
-    if (!schedule.announcements) schedule.announcements = [];
-    if (announcement.id) {
-      const idx = schedule.announcements.findIndex(a => a.id === announcement.id);
-      if (idx >= 0) {
-        schedule.announcements[idx] = {...schedule.announcements[idx], ...announcement};
+    await withSaveLock(async () => {
+      const schedule = await loadSchedule();
+      if (!schedule.announcements) schedule.announcements = [];
+      if (announcement.id) {
+        const idx = schedule.announcements.findIndex(a => a.id === announcement.id);
+        if (idx >= 0) {
+          schedule.announcements[idx] = {...schedule.announcements[idx], ...announcement};
+        } else {
+          schedule.announcements.push(announcement);
+        }
       } else {
+        announcement.id = Date.now().toString() + crypto.randomBytes(4).toString('hex');
         schedule.announcements.push(announcement);
       }
-    } else {
-      announcement.id = Date.now().toString() + Math.random().toString(36).slice(2, 5);
-      schedule.announcements.push(announcement);
-    }
-    schedule.updatedAt = new Date().toISOString();
-    await saveSchedule(schedule);
+      schedule.updatedAt = new Date().toISOString();
+      await saveSchedule(schedule);
+    });
     await logToFile(`公告已更新: ${announcement.title}`);
     res.json({success:true, announcement});
   } catch (err) {
@@ -350,18 +395,23 @@ app.delete('/api/announcements/:id', strictRateLimit, async (req, res) => {
       return res.status(403).json({error:'密码错误'});
     }
     const id = req.params.id;
-    const schedule = await loadSchedule();
-    if (!schedule.announcements) schedule.announcements = [];
-    const beforeLen = schedule.announcements.length;
-    schedule.announcements = schedule.announcements.filter(a => a.id !== id);
-    if (schedule.announcements.length === beforeLen) {
-      return res.status(404).json({error:'Announcement not found'});
-    }
-    schedule.updatedAt = new Date().toISOString();
-    await saveSchedule(schedule);
+    await withSaveLock(async () => {
+      const schedule = await loadSchedule();
+      if (!schedule.announcements) schedule.announcements = [];
+      const beforeLen = schedule.announcements.length;
+      schedule.announcements = schedule.announcements.filter(a => a.id !== id);
+      if (schedule.announcements.length === beforeLen) {
+        throw { status: 404, message: 'Announcement not found' };
+      }
+      schedule.updatedAt = new Date().toISOString();
+      await saveSchedule(schedule);
+    });
     await logToFile(`公告已删除: ${id}`);
     res.json({success:true});
   } catch (err) {
+    if (err.status === 404) {
+      return res.status(404).json({error: err.message});
+    }
     console.error('删除公告失败:', err);
     res.status(500).json({error:'Failed to delete announcement'});
   }
@@ -383,7 +433,7 @@ app.get('/api/export', async (req, res) => {
 // 旧课表数据兼容性处理
 function migrateOldData(data) {
   if (!data || typeof data !== 'object') {
-    return { ...defaultSchedule };
+    return createDefaultSchedule();
   }
   
   const migrated = { ...data };
@@ -398,7 +448,7 @@ function migrateOldData(data) {
       const day = course.day || 'monday';
       if (migrated.courses[day]) {
         migrated.courses[day].push({
-          id: course.id || Date.now().toString() + Math.random().toString(36).substr(2, 5),
+          id: course.id || Date.now().toString() + crypto.randomBytes(4).toString('hex'),
           name: course.name || course.title || '未命名课程',
           period: course.period || course.time || '1',
           location: course.location || course.room || '',
@@ -439,25 +489,38 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     // 数据迁移（兼容旧格式）
     const migratedData = migrateOldData(data);
     
-    const schedule = await loadSchedule();
-    schedule.courses = migratedData.courses;
-    if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) schedule.semesterStart = migratedData.semesterStart;
-    if (migratedData.name) schedule.name = String(migratedData.name).slice(0, 100);
-    if (migratedData.description !== undefined) schedule.description = String(migratedData.description).slice(0, 200);
-    if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
-    if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
-    if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) schedule.periodSettings = migratedData.periodSettings;
-    schedule.updatedAt = new Date().toISOString();
-    await saveSchedule(schedule);
+    await withSaveLock(async () => {
+      const schedule = await loadSchedule();
+      schedule.courses = migratedData.courses;
+      if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) schedule.semesterStart = migratedData.semesterStart;
+      if (migratedData.name) schedule.name = String(migratedData.name).slice(0, 100);
+      if (migratedData.description !== undefined) schedule.description = String(migratedData.description).slice(0, 200);
+      if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
+      if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
+      if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) schedule.periodSettings = migratedData.periodSettings;
+      if (Array.isArray(migratedData.announcements)) schedule.announcements = migratedData.announcements;
+      schedule.updatedAt = new Date().toISOString();
+      await saveSchedule(schedule);
+    });
     await logToFile(`数据导入成功`);
-    res.json({success:true, schedule});
+    const resultSchedule = await loadSchedule();
+    res.json({success:true, schedule: resultSchedule});
   } catch (err) { 
     console.error('Import error:', err);
     res.status(500).json({error:'Import failed'}); 
   }
 });
 
-app.get('/api/logs', async (req, res) => {
+// 日志接口认证中间件
+function requireLogAuth(req, res, next) {
+  const password = req.query.password || req.headers['x-password'] || '';
+  if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    return res.status(403).json({error:'Access denied'});
+  }
+  next();
+}
+
+app.get('/api/logs', strictRateLimit, requireLogAuth, async (req, res) => {
   try {
     await fs.mkdir(LOG_DIR, { recursive: true });
     const files = await fs.readdir(LOG_DIR);
@@ -469,7 +532,7 @@ app.get('/api/logs', async (req, res) => {
   }
 });
 
-app.get('/api/logs/:file', async (req, res) => {
+app.get('/api/logs/:file', strictRateLimit, requireLogAuth, async (req, res) => {
   try {
     const file = req.params.file;
     if (!file.match(/^schedule-\d{4}-\d{2}-\d{2}\.log$/)) {
@@ -479,7 +542,7 @@ app.get('/api/logs/:file', async (req, res) => {
     // 防止目录遍历攻击
     const resolvedPath = path.resolve(filePath);
     const resolvedLogDir = path.resolve(LOG_DIR);
-    if (!resolvedPath.startsWith(resolvedLogDir)) {
+    if (!resolvedPath.startsWith(resolvedLogDir + path.sep)) {
       return res.status(403).json({error:'Access denied'});
     }
     const content = await fs.readFile(filePath, 'utf8');
@@ -508,6 +571,9 @@ app.get('*', (req, res) => {
 
 // 错误处理中间件
 app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({error:'Request entity too large'});
+  }
   console.error('未处理的错误:', err);
   res.status(500).json({error:'Internal server error'});
 });
@@ -555,6 +621,12 @@ ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密
 
 process.on('SIGTERM', async () => {
   console.log('收到 SIGTERM，等待日志写入完成...');
+  await Promise.all(pendingLogs);
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('收到 SIGINT，等待日志写入完成...');
   await Promise.all(pendingLogs);
   process.exit(0);
 });

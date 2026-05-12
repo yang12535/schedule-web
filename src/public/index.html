@@ -571,13 +571,13 @@
     function formatPeriod(p) {
       const ps = parsePeriods(p);
       if (ps.length === 0) return '';
-      return ps.length > 1 ? `第${ps[0]}-${ps.at(-1)}节` : `第${ps[0]}节`;
+      return ps.length > 1 ? `第${ps[0]}-${ps[ps.length - 1]}节` : `第${ps[0]}节`;
     }
 
     function getTimeText(p) {
       const ps = parsePeriods(p);
       if (!ps.length) return '';
-      const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
+      const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
       if (!first || !last) return '';
       const end = (([h,m]) => { const t = +h*60 + +m + last.duration; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; })(last.startTime.split(':'));
       return `${first.startTime}-${end}`;
@@ -591,7 +591,7 @@
       const now = new Date().getHours() * 60 + new Date().getMinutes();
       const ps = parsePeriods(c.period);
       if (ps.length === 0) return false;
-      const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
+      const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
       if (!first || !last) return false;
       return now >= (+first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1]) && 
              now < (+last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration);
@@ -613,7 +613,7 @@
         if (!isActiveInWeek(c, week)) continue;
         const ps = parsePeriods(c.period);
         if (ps.length === 0) continue;
-        const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
+        const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
         if (!first || !last) continue;
         const startMin = +first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1];
         const endMin = +last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration;
@@ -659,7 +659,7 @@
                 <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
                 <div class="course-meta">${c.location?escapeHtml(`📍${c.location}`):''}${c.teacher?escapeHtml(` | 👤${c.teacher}`):''}</div>
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
-                ${isEditMode?`<div class="course-actions"><button onclick="editCourse('${escapeHtml(c.id)}')">✏️</button><button onclick="deleteCourse('${escapeHtml(c.id)}')">🗑️</button></div>`:''}
+                ${isEditMode?`<div class="course-actions"><button data-action="edit" data-id="${escapeHtml(c.id)}">✏️</button><button data-action="delete" data-id="${escapeHtml(c.id)}">🗑️</button></div>`:''}
               </div>
             </div>`;
         });
@@ -804,6 +804,18 @@
           const action = btn.dataset.action;
           if (action === 'edit') editAnnouncement(id);
           else if (action === 'delete') deleteAnnouncement(id);
+        });
+      }
+      // 课程列表事件委托（避免内联 onclick XSS）
+      const scheduleContent = document.getElementById('scheduleContent');
+      if (scheduleContent) {
+        scheduleContent.addEventListener('click', e => {
+          const btn = e.target.closest('[data-action]');
+          if (!btn) return;
+          const action = btn.dataset.action;
+          const id = btn.dataset.id;
+          if (action === 'edit') editCourse(id);
+          else if (action === 'delete') deleteCourse(id);
         });
       }
     }
@@ -989,14 +1001,19 @@
       
       const type = document.querySelector('.color-option.selected')?.dataset.type || '';
       const isMakeup = document.getElementById('courseMakeup')?.checked || false;
+      const startWeek = +document.getElementById('courseStartWeek').value;
+      const endWeek = +document.getElementById('courseEndWeek').value;
+      if (startWeek > endWeek) {
+        return showToast('起始周次不能大于结束周次', 'error');
+      }
       const course = {
         id: editingCourseId || Date.now().toString() + Math.random().toString(36).substr(2, 5),
         name, period, day,
         location: document.getElementById('courseLocation').value.trim(),
         teacher: document.getElementById('courseTeacher').value.trim(),
         type,
-        startWeek: +document.getElementById('courseStartWeek').value,
-        endWeek: +document.getElementById('courseEndWeek').value,
+        startWeek,
+        endWeek,
         weekType: document.getElementById('courseWeekType').value,
         isMakeup
       };
@@ -1097,7 +1114,7 @@
       const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
       const a = Object.assign(document.createElement('a'), {href: url, download: `${schedule.name}_课表.json`});
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
       showToast('已导出');
     }
 
@@ -1113,10 +1130,12 @@
           const res = await fetch('/api/import', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:sessionStorage.getItem('scheduleEditPwd')||'',data})});
           const result = await res.json();
           if (result.success) {
-            if (result.schedule) schedule = result.schedule;
-            if (data.periodSettings?.length) periodSettings = data.periodSettings;
-            if (data.totalPeriods) totalPeriods = data.totalPeriods;
-            if (data.totalWeeks) totalWeeks = data.totalWeeks;
+            if (result.schedule) {
+              schedule = result.schedule;
+              if (result.schedule.periodSettings?.length) periodSettings = result.schedule.periodSettings;
+              if (result.schedule.totalPeriods) totalPeriods = result.schedule.totalPeriods;
+              if (result.schedule.totalWeeks) totalWeeks = result.schedule.totalWeeks;
+            }
             initWeekOptions(); initPeriodSettings();
             document.getElementById('className').textContent = schedule.name;
             document.getElementById('classDesc').textContent = schedule.description || '点击右上角切换编辑模式';
@@ -1185,7 +1204,13 @@
     function dontShowAgain() {
       const ann = currentAnnouncements[currentAnnIndex];
       if (ann) {
-        const dismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
+        let dismissed = [];
+        try {
+          dismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
+          if (!Array.isArray(dismissed)) dismissed = [];
+        } catch (e) {
+          dismissed = [];
+        }
         if (!dismissed.includes(ann.id)) dismissed.push(ann.id);
         localStorage.setItem('dismissedAnnouncements', JSON.stringify(dismissed));
       }
@@ -1193,8 +1218,12 @@
     }
 
     function isAnnDismissed(id) {
-      const dismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
-      return dismissed.includes(id);
+      try {
+        const dismissed = JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]');
+        return Array.isArray(dismissed) && dismissed.includes(id);
+      } catch (e) {
+        return false;
+      }
     }
 
     // ===== 公告管理 =====

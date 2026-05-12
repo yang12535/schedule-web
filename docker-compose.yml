@@ -23,7 +23,7 @@ services:
       - NODE_ENV=production
       - CLASS_NAME=${CLASS_NAME:-计算机1班}
       - CLASS_DESC=${CLASS_DESC:-2024年春季学期}
-      - EDIT_PASSWORD=${EDIT_PASSWORD:-}
+      - EDIT_PASSWORD=${EDIT_PASSWORD}
       - SEMESTER_START=${SEMESTER_START:-2024-03-01}
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
