@@ -320,7 +320,10 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : newSchedule.totalPeriods;
-      if (periodSettings && isValidPeriodSettings(periodSettings)) {
+      if (periodSettings) {
+        if (!isValidPeriodSettings(periodSettings)) {
+          throw new HttpError(400, 'Invalid periodSettings');
+        }
         if (periodSettings.length !== newTotalPeriods) {
           throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
@@ -417,6 +420,16 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
     if (!isValidAnnouncement(announcement)) {
       return res.status(400).json({error:'标题或内容格式不正确'});
     }
+    const sanitizedAnnouncement = {
+      id: announcement.id && typeof announcement.id === 'string' && announcement.id.trim().length <= 50
+        ? announcement.id.trim()
+        : Date.now().toString() + crypto.randomBytes(4).toString('hex'),
+      title: announcement.title,
+      content: announcement.content,
+      startDate: announcement.startDate || null,
+      endDate: announcement.endDate || null,
+      enabled: announcement.enabled !== false
+    };
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
@@ -424,13 +437,12 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
       if (announcement.id) {
         const idx = newSchedule.announcements.findIndex(a => a.id === announcement.id);
         if (idx >= 0) {
-          newSchedule.announcements[idx] = {...newSchedule.announcements[idx], ...announcement};
+          newSchedule.announcements[idx] = sanitizedAnnouncement;
         } else {
-          newSchedule.announcements.push(announcement);
+          newSchedule.announcements.push(sanitizedAnnouncement);
         }
       } else {
-        announcement.id = Date.now().toString() + crypto.randomBytes(4).toString('hex');
-        newSchedule.announcements.push(announcement);
+        newSchedule.announcements.push(sanitizedAnnouncement);
       }
       newSchedule.updatedAt = new Date().toISOString();
       await saveSchedule(newSchedule);
@@ -551,7 +563,10 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : newSchedule.totalPeriods;
-      if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) {
+      if (migratedData.periodSettings) {
+        if (!isValidPeriodSettings(migratedData.periodSettings)) {
+          throw new HttpError(400, 'Invalid periodSettings');
+        }
         if (migratedData.periodSettings.length !== newTotalPeriods) {
           throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
