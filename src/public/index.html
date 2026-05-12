@@ -428,6 +428,15 @@
       return div.innerHTML;
     }
 
+    function escapeAttr(text) {
+      if (text === null || text === undefined) return '';
+      return String(text).replace(/&/g, '&amp;')
+                         .replace(/"/g, '&quot;')
+                         .replace(/'/g, '&#39;')
+                         .replace(/</g, '&lt;')
+                         .replace(/>/g, '&gt;');
+    }
+
     async function init() {
       try {
         await loadSchedule();
@@ -659,7 +668,7 @@
                 <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
                 <div class="course-meta">${c.location?escapeHtml(`📍${c.location}`):''}${c.teacher?escapeHtml(` | 👤${c.teacher}`):''}</div>
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
-                ${isEditMode?`<div class="course-actions"><button data-action="edit" data-id="${escapeHtml(c.id)}">✏️</button><button data-action="delete" data-id="${escapeHtml(c.id)}">🗑️</button></div>`:''}
+                ${isEditMode?`<div class="course-actions"><button data-action="edit" data-id="${escapeAttr(c.id)}">✏️</button><button data-action="delete" data-id="${escapeAttr(c.id)}">🗑️</button></div>`:''}
               </div>
             </div>`;
         });

@@ -153,10 +153,14 @@ app.use((req, res, next) => {
 // 通用速率限制
 app.use(generalRateLimit);
 
+function sanitizeUrl(url) {
+  return String(url).replace(/([?&])(password|token|secret|api_key)=([^&]*)/gi, '$1$2=***');
+}
+
 // 请求日志中间件
 app.use((req, res, next) => {
   const ip = getClientIp(req);
-  logToFile(`${req.method} ${req.url} - IP: ${ip}`);
+  logToFile(`${req.method} ${sanitizeUrl(req.url)} - IP: ${ip}`);
   next();
 });
 
@@ -182,7 +186,7 @@ async function loadSchedule() {
       return scheduleCache;
     }
     const data = JSON.parse(content);
-    scheduleCache = {...createDefaultSchedule(), ...data, periodSettings: data.periodSettings || defaultPeriods};
+    scheduleCache = {...createDefaultSchedule(), ...data, periodSettings: data.periodSettings || JSON.parse(JSON.stringify(defaultPeriods))};
     return scheduleCache;
   } catch (err) {
     if (err.code === 'ENOENT') {
@@ -268,24 +272,26 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       await logToFile(`密码错误尝试 - 设置更新`);
       return res.status(403).json({error:'密码错误'});
     }
-    await withSaveLock(async () => {
+    const updatedName = await withSaveLock(async () => {
       const schedule = await loadSchedule();
-      if (name !== undefined) schedule.name = String(name).slice(0, 100);
-      if (description !== undefined) schedule.description = String(description).slice(0, 200);
-      if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
+      // 先校验一致性
       const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : schedule.totalPeriods;
       if (periodSettings && isValidPeriodSettings(periodSettings)) {
         if (periodSettings.length !== newTotalPeriods) {
           throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
         }
-        schedule.periodSettings = periodSettings;
       }
+      if (name !== undefined) schedule.name = String(name).slice(0, 100);
+      if (description !== undefined) schedule.description = String(description).slice(0, 200);
+      if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
       if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
+      if (periodSettings && isValidPeriodSettings(periodSettings)) schedule.periodSettings = periodSettings;
       schedule.updatedAt = new Date().toISOString();
       await saveSchedule(schedule);
+      return schedule.name;
     });
-    await logToFile(`设置已更新: ${name || (await loadSchedule()).name}`);
+    await logToFile(`设置已更新: ${name || updatedName}`);
     res.json({success:true});
   } catch (err) {
     if (err.status === 400) {
@@ -491,6 +497,13 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
+      // 先校验一致性
+      const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : schedule.totalPeriods;
+      if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) {
+        if (migratedData.periodSettings.length !== newTotalPeriods) {
+          throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+        }
+      }
       schedule.courses = migratedData.courses;
       if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) schedule.semesterStart = migratedData.semesterStart;
       if (migratedData.name) schedule.name = String(migratedData.name).slice(0, 100);
@@ -511,9 +524,9 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
   }
 });
 
-// 日志接口认证中间件
+// 日志接口认证中间件（仅允许 header 传参，防止密码写入 URL 日志）
 function requireLogAuth(req, res, next) {
-  const password = req.query.password || req.headers['x-password'] || '';
+  const password = req.headers['x-password'] || '';
   if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
     return res.status(403).json({error:'Access denied'});
   }
@@ -612,6 +625,9 @@ ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密
 ========================================
     `;
     console.log(banner);
+    if (!process.env.EDIT_PASSWORD && EDIT_PASSWORD) {
+      console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
+    }
     logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
   });
 }).catch(err => {
