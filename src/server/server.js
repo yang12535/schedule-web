@@ -290,6 +290,9 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
       if (periodSettings && isValidPeriodSettings(periodSettings)) schedule.periodSettings = periodSettings;
+      if (schedule.periodSettings.length !== schedule.totalPeriods) {
+        throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+      }
       schedule.updatedAt = new Date().toISOString();
       await saveSchedule(schedule);
       return schedule.name;
@@ -514,10 +517,16 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
       if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
       if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
       if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) schedule.periodSettings = migratedData.periodSettings;
+      if (schedule.periodSettings.length !== schedule.totalPeriods) {
+        throw { status: 400, message: 'periodSettings length does not match totalPeriods' };
+      }
       if (Array.isArray(migratedData.announcements)) {
         schedule.announcements = migratedData.announcements.filter(a => {
           return a && typeof a === 'object' && typeof a.title === 'string' && a.title.trim();
-        });
+        }).map(a => ({
+          ...a,
+          id: (typeof a.id === 'string' && a.id.trim()) ? a.id.trim() : Date.now().toString() + crypto.randomBytes(4).toString('hex')
+        }));
       }
       schedule.updatedAt = new Date().toISOString();
       await saveSchedule(schedule);
@@ -526,6 +535,9 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     const resultSchedule = await loadSchedule();
     res.json({success:true, schedule: resultSchedule});
   } catch (err) { 
+    if (err.status === 400) {
+      return res.status(400).json({error: err.message});
+    }
     console.error('Import error:', err);
     res.status(500).json({error:'Import failed'}); 
   }
@@ -533,7 +545,8 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
 
 // 日志接口认证中间件（仅允许 header 传参，防止密码写入 URL 日志）
 function requireLogAuth(req, res, next) {
-  const password = req.headers['x-password'] || '';
+  const rawPassword = req.headers['x-password'];
+  const password = Array.isArray(rawPassword) ? rawPassword[0] : (rawPassword || '');
   if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
     return res.status(403).json({error:'Access denied'});
   }
@@ -628,7 +641,7 @@ init().then(() => {
 日志目录: ${LOG_DIR}
 静态文件: ${publicPath}
 ----------------------------------------
-${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密码'}
+${EDIT_PASSWORD ? (process.env.EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : `🔒 编辑密码: ${EDIT_PASSWORD}`) : '🔓 编辑模式: 无需密码'}
 ========================================
     `;
     console.log(banner);
