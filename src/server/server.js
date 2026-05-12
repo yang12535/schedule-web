@@ -68,11 +68,13 @@ function createRateLimiter(maxRequests, windowMs, keyFn) {
 
 function getClientIp(req) {
   let ip = req.socket.remoteAddress || 'unknown';
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded && typeof forwarded === 'string') {
-    const firstIp = forwarded.split(',')[0].trim().replace(/[\r\n]/g, '');
-    if (/^[\d.a-fA-F:]+$/.test(firstIp)) {
-      ip = firstIp;
+  if (TRUST_PROXY) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded && typeof forwarded === 'string') {
+      const firstIp = forwarded.split(',')[0].trim().replace(/[\r\n]/g, '');
+      if (/^[\d.a-fA-F:]+$/.test(firstIp)) {
+        ip = firstIp;
+      }
     }
   }
   return ip.replace(/[\r\n]/g, '');
@@ -115,6 +117,7 @@ const CLASS_NAME = process.env.CLASS_NAME || '我的课表';
 const CLASS_DESC = process.env.CLASS_DESC || '';
 const EDIT_PASSWORD = process.env.EDIT_PASSWORD ? process.env.EDIT_PASSWORD : generatePassword();
 const SEMESTER_START = process.env.SEMESTER_START || `${new Date().getFullYear()}-03-01`;
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 
 const defaultPeriods = [
   {startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},
@@ -511,7 +514,11 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
       if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) schedule.totalPeriods = migratedData.totalPeriods;
       if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) schedule.totalWeeks = migratedData.totalWeeks;
       if (migratedData.periodSettings && isValidPeriodSettings(migratedData.periodSettings)) schedule.periodSettings = migratedData.periodSettings;
-      if (Array.isArray(migratedData.announcements)) schedule.announcements = migratedData.announcements;
+      if (Array.isArray(migratedData.announcements)) {
+        schedule.announcements = migratedData.announcements.filter(a => {
+          return a && typeof a === 'object' && typeof a.title === 'string' && a.title.trim();
+        });
+      }
       schedule.updatedAt = new Date().toISOString();
       await saveSchedule(schedule);
     });
