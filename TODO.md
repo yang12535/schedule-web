@@ -183,6 +183,19 @@
 
 ---
 
+---
+
+## 已知问题（待修复）
+
+- [ ] **导出功能 500 错误（Node.js 版本升级导致）**
+  - 位置：`server.js:496`，`/api/export`
+  - 问题：`Content-Disposition` header 中包含裸中文 `_课表.json`，Node.js v19+ 禁止非 ASCII 字符出现在 header 值中，触发 `ERR_INVALID_CHAR`
+  - 根因：v1.0.4 使用 Node.js 18（检查宽松），当前环境升级到 Node.js 20 后同样的代码崩溃
+  - 影响：班级名含中文时导出必现 500
+  - 建议修复：使用 RFC 5987 `filename*=UTF-8''` 编码中文文件名
+  - 状态：非安全漏洞，功能 bug，高峰后处理
+
+---
 ## Copilot 后续建议（非阻塞，低优先级）
 
 - [ ] **清理 EDIT_PASSWORD 不可达分支**
