@@ -183,4 +183,18 @@
 
 ---
 
+## Copilot 后续建议（非阻塞，低优先级）
+
+- [ ] **清理 EDIT_PASSWORD 不可达分支**
+  - 位置：`server.js:158` 附近，`/api/verify`
+  - 问题：`EDIT_PASSWORD` 现在总是非空（空 env 时 fallback 到 `generatePassword()`），导致 `!EDIT_PASSWORD`（无需密码模式）分支实际上不可达，与 banner 提示和 `requirePassword` 返回值不一致
+  - 建议：统一移除不可达分支，或添加显式 `ALLOW_NO_PASSWORD` flag
+
+- [ ] **settings 端点 periodSettings presence 检查**
+  - 位置：`server.js:330`
+  - 问题：`if (periodSettings)` 对 `null`/`false` 等 falsy 非 undefined 值会静默忽略，客户端可能误以为设置已生效
+  - 建议：改用 `periodSettings !== undefined` 判断字段是否存在，若存在但非数组/无效则返回 400
+
+---
+
 *本清单由自动化扫描生成，建议按优先级逐项修复并打勾确认。*
