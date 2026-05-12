@@ -105,7 +105,7 @@
   - 位置：`index.html:1099-1100`
   - 导出后立即释放，移动端浏览器下载可能失败
 
-- [ ] **修复 Array.prototype.at() 兼容性**
+- [x] **修复 Array.prototype.at() 兼容性**
   - 位置：`index.html:574-660`
   - ES2022 特性，旧浏览器直接报错白屏
 

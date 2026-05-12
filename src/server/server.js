@@ -45,10 +45,10 @@ function isValidPeriodSettings(arr) {
 function isValidCourse(course) {
   if (!course || typeof course !== 'object') return false;
   if (typeof course.name !== 'string' || !course.name.trim() || course.name.length > 100) return false;
-  if (course.location && (typeof course.location !== 'string' || course.location.length > 100)) return false;
-  if (course.teacher && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
+  if (course.location !== undefined && course.location !== null && (typeof course.location !== 'string' || course.location.length > 100)) return false;
+  if (course.teacher !== undefined && course.teacher !== null && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
   if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
-  if (course.type && typeof course.type !== 'string') return false;
+  if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
   return true;
 }
 
@@ -420,9 +420,10 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
     if (!isValidAnnouncement(announcement)) {
       return res.status(400).json({error:'标题或内容格式不正确'});
     }
+    const normalizedId = announcement.id && typeof announcement.id === 'string' ? announcement.id.trim() : null;
     const sanitizedAnnouncement = {
-      id: announcement.id && typeof announcement.id === 'string' && announcement.id.trim().length <= 50
-        ? announcement.id.trim()
+      id: normalizedId && normalizedId.length <= 50
+        ? normalizedId
         : Date.now().toString() + crypto.randomBytes(4).toString('hex'),
       title: announcement.title,
       content: announcement.content,
@@ -434,8 +435,8 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       if (!newSchedule.announcements) newSchedule.announcements = [];
-      if (announcement.id) {
-        const idx = newSchedule.announcements.findIndex(a => a.id === announcement.id);
+      if (normalizedId) {
+        const idx = newSchedule.announcements.findIndex(a => a.id === normalizedId);
         if (idx >= 0) {
           newSchedule.announcements[idx] = sanitizedAnnouncement;
         } else {
