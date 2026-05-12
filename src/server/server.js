@@ -79,7 +79,7 @@ const rateLimitStore = new Map();
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateLimitStore) {
-    if (now - entry.startTime > 15 * 60 * 1000) {
+    if (now > entry.expiresAt) {
       rateLimitStore.delete(key);
     }
   }
@@ -89,10 +89,11 @@ function createRateLimiter(maxRequests, windowMs, keyFn) {
   return (req, res, next) => {
     const key = keyFn(req);
     const now = Date.now();
-    const entry = rateLimitStore.get(key) || { count: 0, startTime: now };
+    const entry = rateLimitStore.get(key) || { count: 0, startTime: now, expiresAt: now + windowMs };
     if (now - entry.startTime > windowMs) {
       entry.count = 1;
       entry.startTime = now;
+      entry.expiresAt = now + windowMs;
     } else {
       entry.count++;
     }
@@ -288,7 +289,7 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
     }
     
     // 验证 courses 数据结构
-    if (!courses || typeof courses !== 'object' || Array.isArray(courses)) {
+    if (!isValidCourses(courses)) {
       return res.status(400).json({error:'Invalid courses data'});
     }
     
@@ -452,14 +453,15 @@ app.delete('/api/announcements/:id', strictRateLimit, async (req, res) => {
     const id = req.params.id;
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
-      if (!schedule.announcements) schedule.announcements = [];
-      const beforeLen = schedule.announcements.length;
-      schedule.announcements = schedule.announcements.filter(a => a.id !== id);
-      if (schedule.announcements.length === beforeLen) {
+      const newSchedule = JSON.parse(JSON.stringify(schedule));
+      if (!newSchedule.announcements) newSchedule.announcements = [];
+      const beforeLen = newSchedule.announcements.length;
+      newSchedule.announcements = newSchedule.announcements.filter(a => a.id !== id);
+      if (newSchedule.announcements.length === beforeLen) {
         throw new HttpError(404, 'Announcement not found');
       }
-      schedule.updatedAt = new Date().toISOString();
-      await saveSchedule(schedule);
+      newSchedule.updatedAt = new Date().toISOString();
+      await saveSchedule(newSchedule);
     });
     await logToFile(`公告已删除: ${id}`);
     res.json({success:true});
