@@ -34,6 +34,7 @@ function isValidTimeString(str) {
 function isValidPeriodSettings(arr) {
   if (!Array.isArray(arr) || arr.length > 20) return false;
   for (const p of arr) {
+    if (!p || typeof p !== 'object') return false;
     if (!isValidTimeString(p.startTime) || !Number.isInteger(p.duration) || p.duration < 1 || p.duration > 300) {
       return false;
     }
@@ -569,11 +570,12 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');
       }
       if (Array.isArray(migratedData.announcements)) {
-        newSchedule.announcements = migratedData.announcements.filter(a => {
-          return a && typeof a === 'object' && typeof a.title === 'string' && a.title.trim();
-        }).map(a => ({
-          ...a,
-          id: (typeof a.id === 'string' && a.id.trim()) ? a.id.trim() : Date.now().toString() + crypto.randomBytes(4).toString('hex')
+        newSchedule.announcements = migratedData.announcements.filter(isValidAnnouncement).map(a => ({
+          id: (typeof a.id === 'string' && a.id.trim()) ? a.id.trim() : Date.now().toString() + crypto.randomBytes(4).toString('hex'),
+          title: a.title,
+          content: a.content,
+          startDate: a.startDate || null,
+          endDate: a.endDate || null
         }));
       }
       newSchedule.updatedAt = new Date().toISOString();
