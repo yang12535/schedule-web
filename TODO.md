@@ -211,3 +211,52 @@
 ---
 
 *本清单由自动化扫描生成，建议按优先级逐项修复并打勾确认。*
+
+
+---
+
+## Issue #9 代码审查跟进（2026-05-13）
+
+### 高优先级（本次 PR 已修复）
+
+- [x] **Dockerfile 非 root 用户运行**
+  - 已添加 `USER node`，数据目录权限 `chown -R node:node`
+  - Dockerfile 内置 `HEALTHCHECK`
+  - 新增 `.dockerignore`
+
+- [x] **前端 JS 单文件拆分**
+  - 已将 `index.html` 内嵌 ~1000 行 JS 提取到 `src/public/js/schedule.js`
+  - `index.html` 改为 `<script src="js/schedule.js"></script>` 引用
+
+- [x] **测试基础设施**
+  - 后端：添加 `jest` + `supertest`，覆盖核心 API（读写、认证、导入导出）
+  - CI：新增 `.github/workflows/ci.yml`，在 push/PR 到 `main`/`test` 时自动运行测试
+  - `server.js` 支持测试环境导出（`module.exports = { app, init }`）
+  - 修复导出功能中文文件名 `Content-Disposition` 编码（RFC 5987 `filename*=UTF-8''`）
+
+### 中优先级（记录待后续 PR 修复）
+
+- [ ] **引入 `helmet` 中间件**
+  - 添加安全响应头（CSP、HSTS、X-Frame-Options 等）
+
+- [ ] **使用 `express-rate-limit` 替代自定义限流**
+  - 当前基于内存 Map 的限流在集群部署下失效，需替换为成熟中间件
+
+- [ ] **暗色模式完全实现 + ARIA 可访问性**
+  - 当前暗色模式 CSS 变量已预留但未完整应用
+  - Modal、Toast 等组件缺少 `role`、`aria-live`、焦点管理
+
+### 低优先级（记录待后续 PR 修复）
+
+- [ ] **添加 ESLint + Prettier + TypeScript（可选）**
+  - 统一代码风格，提升可维护性
+
+- [ ] **拆分 `server.js` 路由模块**
+  - 当前 700+ 行，耦合配置、工具函数、中间件、所有路由
+
+- [ ] **更新 Dockerfile 废弃参数**
+  - `npm ci --only=production` → `--omit=dev`
+
+---
+
+*本清单由自动化扫描生成，建议按优先级逐项修复并打勾确认。*

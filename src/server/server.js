@@ -87,6 +87,10 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 function createRateLimiter(maxRequests, windowMs, keyFn) {
+  // 测试环境跳过限流，避免测试被误拦截
+  if (process.env.NODE_ENV === 'test') {
+    return (req, res, next) => next();
+  }
   return (req, res, next) => {
     const key = keyFn(req);
     const now = Date.now();
@@ -493,7 +497,9 @@ app.get('/api/export', async (req, res) => {
     const schedule = await loadSchedule();
     await logToFile(`数据导出`);
     res.setHeader('Content-Type','application/json');
-    res.setHeader('Content-Disposition',`attachment; filename="${encodeURIComponent(schedule.name)}_课表.json"`);
+    const filename = `${schedule.name}_课表.json`;
+    const encoded = encodeURIComponent(filename);
+    res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encoded}`);
     res.json({...schedule, exportDate:new Date().toISOString()});
   } catch (err) {
     console.error('导出失败:', err);
@@ -696,9 +702,13 @@ async function init() {
   }
 }
 
-init().then(() => {
-  app.listen(PORT, () => {
-    const banner = `
+// 导出供测试使用
+module.exports = { app, init };
+
+if (require.main === module) {
+  init().then(() => {
+    app.listen(PORT, () => {
+      const banner = `
 ========================================
 📚 班级课表服务已启动
 ========================================
@@ -710,30 +720,31 @@ init().then(() => {
 ----------------------------------------
 ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密码'}
 ========================================
-    `;
-    console.log(banner);
-    if (!process.env.EDIT_PASSWORD && EDIT_PASSWORD) {
-      if (process.env.PRINT_EDIT_PASSWORD === 'true') {
-        console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
-      } else {
-        console.log('🔑 编辑密码已自动生成（设置 PRINT_EDIT_PASSWORD=true 可在日志中查看）');
+      `;
+      console.log(banner);
+      if (!process.env.EDIT_PASSWORD && EDIT_PASSWORD) {
+        if (process.env.PRINT_EDIT_PASSWORD === 'true') {
+          console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
+        } else {
+          console.log('🔑 编辑密码已自动生成（设置 PRINT_EDIT_PASSWORD=true 可在日志中查看）');
+        }
       }
-    }
-    logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
+      logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
+    });
+  }).catch(err => {
+    console.error('服务启动失败:', err);
+    process.exit(1);
   });
-}).catch(err => {
-  console.error('服务启动失败:', err);
-  process.exit(1);
-});
 
-process.on('SIGTERM', async () => {
-  console.log('收到 SIGTERM，等待日志写入完成...');
-  await Promise.all(pendingLogs);
-  process.exit(0);
-});
+  process.on('SIGTERM', async () => {
+    console.log('收到 SIGTERM，等待日志写入完成...');
+    await Promise.all(pendingLogs);
+    process.exit(0);
+  });
 
-process.on('SIGINT', async () => {
-  console.log('收到 SIGINT，等待日志写入完成...');
-  await Promise.all(pendingLogs);
-  process.exit(0);
-});
+  process.on('SIGINT', async () => {
+    console.log('收到 SIGINT，等待日志写入完成...');
+    await Promise.all(pendingLogs);
+    process.exit(0);
+  });
+}
