@@ -506,7 +506,9 @@ app.get('/api/export', async (req, res) => {
     await logToFile(`数据导出`);
     res.setHeader('Content-Type','application/json');
     const filename = `${schedule.name}_课表.json`;
-    const encoded = encodeURIComponent(filename);
+    // RFC 5987: encodeURIComponent 不编码 *!'()，这些字符在 attr-char 中不安全，需额外转义
+    const encoded = encodeURIComponent(filename)
+      .replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
     const asciiFallback = 'schedule_export.json';
     res.setHeader('Content-Disposition',`attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
     res.json({...schedule, exportDate:new Date().toISOString()});
