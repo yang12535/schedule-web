@@ -19,8 +19,11 @@ RUN npm ci --only=production && npm cache clean --force
 COPY src/server/*.js ./
 COPY src/public/ ./public/
 
-# 创建数据目录并设置权限
-RUN mkdir -p /data/logs && chmod 750 /data /data/logs
+# 创建数据目录并设置权限（仅数据目录对 node 用户可写，/app 保持 root 只读）
+RUN mkdir -p /data/logs && chmod 750 /data /data/logs && chown -R node:node /data
+
+# 切换到非 root 用户运行（安全最佳实践）
+USER node
 
 # 环境变量
 ENV NODE_ENV=production \
@@ -30,5 +33,8 @@ ENV NODE_ENV=production \
     PORT=3000
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/healthz || exit 1
 
 CMD ["node", "server.js"]
