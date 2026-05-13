@@ -391,6 +391,17 @@
       if (pwdInput) {
         pwdInput.addEventListener('keypress', e => { if(e.key === 'Enter') verifyPassword(); });
       }
+      // Toolbar 事件委托（避免内联 onclick，保持选择器稳定）
+      const toolbar = document.querySelector('.toolbar');
+      if (toolbar) {
+        toolbar.addEventListener('click', e => {
+          const btn = e.target.closest('[data-action]');
+          if (!btn) return;
+          const action = btn.dataset.action;
+          if (action === 'save') { e.preventDefault(); saveChanges(); }
+        });
+      }
+
       // 公告列表事件委托（避免 innerHTML 替换后事件丢失）
       const annListContainer = document.getElementById('annListContainer');
       if (annListContainer) {
@@ -683,8 +694,8 @@
     }
 
     async function saveChanges() {
-      const btn = document.querySelector('.toolbar-btn:nth-child(2)');
-      if (btn) btn.textContent = '保存中...';
+      const btn = document.querySelector('[data-action="save"]');
+      if (btn) { btn.textContent = '保存中...'; btn.disabled = true; }
       try {
         const res = await fetch('/api/schedule/courses', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:sessionStorage.getItem('scheduleEditPwd')||'',courses:schedule.courses})});
         const data = await res.json();
@@ -693,7 +704,7 @@
         console.error('保存失败:', err);
         showToast('网络错误', 'error'); 
       }
-      if (btn) btn.textContent = '💾 保存';
+      if (btn) { btn.textContent = '💾 保存'; btn.disabled = false; }
     }
 
     async function clearAll() {

@@ -219,4 +219,11 @@ describe('Schedule API', () => {
       expect(Array.isArray(res.body.announcements)).toBe(true);
     });
   });
+
+  describe('GET /healthz', () => {
+    it('应返回健康状态，不写日志', async () => {
+      const res = await request(app).get('/healthz').expect(200);
+      expect(res.body.status).toBe('ok');
+    });
+  });
 });

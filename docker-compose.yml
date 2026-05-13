@@ -29,6 +29,8 @@ services:
       - LOG_DIR=/data/logs
       - PUBLIC_PATH=/app/public
     # 与 Dockerfile 中 USER node 保持一致（node 镜像 UID=1000）
+    # 注意：宿主机 ./data 和 ./logs 目录需对 UID 1000 可写，
+    # 首次部署请运行 deploy/install.sh 或手动执行：mkdir -p data logs && chown -R 1000:1000 data logs
     user: "1000:1000"
     restart: unless-stopped
     healthcheck:
