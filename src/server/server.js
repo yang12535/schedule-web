@@ -109,6 +109,7 @@ const defaultSchedule = {
 };
 
 let scheduleCache = null;
+let saveLock = Promise.resolve();
 
 app.use(express.json());
 
@@ -179,19 +180,25 @@ async function loadSchedule() {
 }
 
 async function saveSchedule(data) {
-  const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-  try {
-    // 确保目录存在
-    await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-    await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
-    await fs.rename(tempFile, DATA_FILE);
-    scheduleCache = data;
-  } catch (err) {
-    // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
-    try { await fs.unlink(tempFile); } catch (e) { if (e.code !== 'ENOENT') console.error('清理临时文件失败:', e.message); }
-    console.error('保存数据失败:', err.message);
-    throw err;
-  }
+  const next = saveLock.then(async () => {
+    const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      // 确保目录存在
+      await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
+      await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
+      await fs.rename(tempFile, DATA_FILE);
+      scheduleCache = data;
+    } catch (err) {
+      // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
+      try { await fs.unlink(tempFile); } catch (e) { if (e.code !== 'ENOENT') console.error('清理临时文件失败:', e.message); }
+      console.error('保存数据失败:', err.message);
+      throw err;
+    }
+  });
+  saveLock = next.catch(err => {
+    console.error('Save lock chain error:', err.message);
+  });
+  return next;
 }
 
 app.get('/api/schedule', async (req, res) => {
@@ -240,7 +247,19 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
     if (name !== undefined) schedule.name = String(name).slice(0, 100);
     if (description !== undefined) schedule.description = String(description).slice(0, 200);
     if (semesterStart && isValidDateString(semesterStart)) schedule.semesterStart = semesterStart;
-    if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) schedule.totalPeriods = totalPeriods;
+    if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) {
+      schedule.totalPeriods = totalPeriods;
+      if (periodSettings === undefined && Array.isArray(schedule.periodSettings)) {
+        if (schedule.periodSettings.length > totalPeriods) {
+          schedule.periodSettings = schedule.periodSettings.slice(0, totalPeriods);
+        } else if (schedule.periodSettings.length < totalPeriods) {
+          const fallback = defaultPeriods[defaultPeriods.length - 1];
+          for (let i = schedule.periodSettings.length; i < totalPeriods; i++) {
+            schedule.periodSettings.push({ ...(defaultPeriods[i] || fallback) });
+          }
+        }
+      }
+    }
     if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) schedule.totalWeeks = totalWeeks;
     if (periodSettings && isValidPeriodSettings(periodSettings)) schedule.periodSettings = periodSettings;
     schedule.updatedAt = new Date().toISOString();
