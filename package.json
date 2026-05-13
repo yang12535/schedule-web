@@ -1,6 +1,5 @@
 {
   "scripts": {
-    "pretest": "cd src/server && npm ci",
     "test": "jest --runInBand --coverage"
   },
   "devDependencies": {

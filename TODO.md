@@ -256,7 +256,3 @@
 
 - [ ] **更新 Dockerfile 废弃参数**
   - `npm ci --only=production` → `--omit=dev`
-
----
-
-*本清单由自动化扫描生成，建议按优先级逐项修复并打勾确认。*

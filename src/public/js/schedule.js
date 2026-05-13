@@ -239,7 +239,7 @@
       const container = document.getElementById('scheduleContent');
       if (!schedule || !container) return;
       const courses = schedule.courses[currentDay] || [];
-      let html = isEditMode ? `<button class="add-btn" onclick="openModal()">+ 添加${escapeHtml(dayNames[currentDay])}课程</button>` : '';
+      let html = isEditMode ? `<button class="add-btn" data-action="add-course">+ 添加${escapeHtml(dayNames[currentDay])}课程</button>` : '';
       if (!courses.length) {
         html += `<div class="empty-state"><div class="empty-state-icon">📚</div><p>${isEditMode ? '暂无课程' : '今日无课'}</p></div>`;
       } else {
@@ -411,7 +411,8 @@
           if (!btn) return;
           const action = btn.dataset.action;
           const id = btn.dataset.id;
-          if (action === 'edit') editCourse(id);
+          if (action === 'add-course') openModal();
+          else if (action === 'edit') editCourse(id);
           else if (action === 'delete') deleteCourse(id);
         });
       }

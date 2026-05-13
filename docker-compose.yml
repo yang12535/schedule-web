@@ -28,6 +28,8 @@ services:
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
       - PUBLIC_PATH=/app/public
+    # 与 Dockerfile 中 USER node 保持一致（node 镜像 UID=1000）
+    user: "1000:1000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/healthz"]
