@@ -30,7 +30,7 @@ services:
       - PUBLIC_PATH=/app/public
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/schedule"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3

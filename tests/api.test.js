@@ -166,12 +166,15 @@ describe('Schedule API', () => {
   });
 
   describe('GET /api/export', () => {
-    it('应导出 JSON 文件', async () => {
+    it('应导出 JSON 文件，且 Content-Disposition 包含 RFC 5987 filename* 和 ASCII fallback', async () => {
       const res = await request(app)
         .get('/api/export')
         .expect(200)
         .expect('Content-Type', /json/);
-      expect(res.headers['content-disposition']).toContain('attachment');
+      const cd = res.headers['content-disposition'];
+      expect(cd).toContain('attachment');
+      expect(cd).toContain('filename="schedule_export.json"');
+      expect(cd).toContain('filename*=UTF-8');
       expect(res.body).toHaveProperty('name');
     });
   });

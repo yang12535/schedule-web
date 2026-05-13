@@ -378,9 +378,10 @@
       ['courseModal','settingsModal','passwordModal','annManageModal'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-          el.onclick = e => { 
+          el.onclick = e => {
             if(e.target.id === id) {
-              const closeFn = window['close'+id.replace('Modal','').replace('course','Course').replace('settings','Settings').replace('password','Password').replace('annManage','AnnManage')+'Modal'];
+              if (id === 'courseModal') { closeModal(); return; }
+              const closeFn = window['close'+id.replace('Modal','').replace('settings','Settings').replace('password','Password').replace('annManage','AnnManage')+'Modal'];
               if (typeof closeFn === 'function') closeFn();
             }
           };
@@ -664,7 +665,7 @@
       await autoSave();
     }
 
-    // 自动保存（静默保存，不显示提示）
+    // 自动保存（成功时提示已保存，失败时提示错误）
     async function autoSave() {
       try {
         const res = await fetch('/api/schedule/courses', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:sessionStorage.getItem('scheduleEditPwd')||'',courses:schedule.courses})});

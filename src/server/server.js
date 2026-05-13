@@ -188,6 +188,11 @@ let scheduleCache = null;
 
 app.use(express.json({ limit: '1mb' }));
 
+// 轻量健康检查端点（不写日志、不限流，供 Docker/K8s 使用）
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 // 静态文件路径 - 支持两种部署方式
 const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
 app.use(express.static(publicPath));
