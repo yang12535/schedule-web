@@ -87,6 +87,7 @@ if (process.env.NODE_ENV !== 'test') {
       }
     }
   }, 5 * 60 * 1000);
+  rateLimitCleanupInterval.unref();
 }
 
 function createRateLimiter(maxRequests, windowMs, keyFn) {
@@ -749,12 +750,14 @@ ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密
 
   process.on('SIGTERM', async () => {
     console.log('收到 SIGTERM，等待日志写入完成...');
+    if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval);
     await Promise.all(pendingLogs);
     process.exit(0);
   });
 
   process.on('SIGINT', async () => {
     console.log('收到 SIGINT，等待日志写入完成...');
+    if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval);
     await Promise.all(pendingLogs);
     process.exit(0);
   });

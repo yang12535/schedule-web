@@ -7,6 +7,9 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs').promises;
 
+// 显式设置测试环境，确保限流/定时器等行为一致
+process.env.NODE_ENV = 'test';
+
 // 在加载 server.js 前设置环境变量，避免污染真实数据
 const tmpDir = path.join(os.tmpdir(), `schedule-test-${Date.now()}`);
 process.env.DATA_FILE = path.join(tmpDir, 'schedule.json');
