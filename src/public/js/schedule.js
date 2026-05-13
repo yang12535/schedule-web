@@ -93,7 +93,7 @@
         container.innerHTML = periodSettings.slice(0, count).map((p, i) => `
           <div class="period-setting">
             <label>第${i+1}节</label>
-            <input type="time" id="periodTime${i}" value="${escapeHtml(p.startTime)}">
+            <input type="time" id="periodTime${i}" value="${escapeAttr(p.startTime)}">
             <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
             <span style="font-size:12px;color:var(--gray-400);">分钟</span>
           </div>
