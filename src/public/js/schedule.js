@@ -1,5 +1,6 @@
     // State
     let schedule = null, isEditMode = false, currentDay = 'monday', currentWeekOffset = 0, editingCourseId = null;
+    let annListCache = [];
     let totalPeriods = 12, totalWeeks = 16;
     let updateInterval = null; // 修复：用于清理定时器
     const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
@@ -873,6 +874,7 @@
         container.innerHTML = '<div style="text-align:center;color:var(--gray-400);padding:20px;">暂无公告</div>';
         return;
       }
+      annListCache = list;
       container.innerHTML = list.map(a => {
         const range = [];
         if (a.startDate) range.push(a.startDate);
@@ -884,8 +886,8 @@
             <div class="ann-list-title">${escapeHtml(a.title)} ${isEnabled ? '' : '<span style="color:var(--gray-400);">(已禁用)</span>'}</div>
             <div class="ann-list-meta">${escapeHtml(rangeStr)}</div>
             <div class="ann-list-actions">
-              <button class="ann-btn-edit" data-id="${escapeHtml(a.id)}" data-action="edit">编辑</button>
-              <button class="ann-btn-del" data-id="${escapeHtml(a.id)}" data-action="delete">删除</button>
+              <button class="ann-btn-edit" data-id="${escapeAttr(a.id)}" data-action="edit">编辑</button>
+              <button class="ann-btn-del" data-id="${escapeAttr(a.id)}" data-action="delete">删除</button>
             </div>
           </div>
         `;
@@ -893,7 +895,7 @@
     }
 
     function editAnnouncement(id) {
-      const ann = ((schedule && schedule.announcements) || []).find(a => a.id === id);
+      const ann = (annListCache || []).find(a => a.id === id);
       if (!ann) return;
       document.getElementById('annEditId').value = ann.id;
       document.getElementById('annEditTitle').value = ann.title || '';

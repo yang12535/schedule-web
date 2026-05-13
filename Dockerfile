@@ -20,7 +20,7 @@ COPY src/server/*.js ./
 COPY src/public/ ./public/
 
 # 创建数据目录并设置权限（node 用户可写）
-RUN mkdir -p /data/logs && chmod 755 /data /data/logs && chown -R node:node /data /app
+RUN mkdir -p /data/logs && chmod 750 /data /data/logs && chown -R node:node /data /app
 
 # 切换到非 root 用户运行（安全最佳实践）
 USER node

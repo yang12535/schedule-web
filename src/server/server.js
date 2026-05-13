@@ -76,15 +76,18 @@ function isValidAnnouncement(a) {
 // 内存级速率限制
 const rateLimitStore = new Map();
 
-// TTL 清理：每5分钟清理过期的限流记录
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitStore) {
-    if (now > entry.expiresAt) {
-      rateLimitStore.delete(key);
+// TTL 清理：每5分钟清理过期的限流记录（测试环境禁用，避免 Jest open handles）
+let rateLimitCleanupInterval = null;
+if (process.env.NODE_ENV !== 'test') {
+  rateLimitCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of rateLimitStore) {
+      if (now > entry.expiresAt) {
+        rateLimitStore.delete(key);
+      }
     }
-  }
-}, 5 * 60 * 1000);
+  }, 5 * 60 * 1000);
+}
 
 function createRateLimiter(maxRequests, windowMs, keyFn) {
   // 测试环境跳过限流，避免测试被误拦截
@@ -499,7 +502,8 @@ app.get('/api/export', async (req, res) => {
     res.setHeader('Content-Type','application/json');
     const filename = `${schedule.name}_课表.json`;
     const encoded = encodeURIComponent(filename);
-    res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encoded}`);
+    const asciiFallback = 'schedule_export.json';
+    res.setHeader('Content-Disposition',`attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
     res.json({...schedule, exportDate:new Date().toISOString()});
   } catch (err) {
     console.error('导出失败:', err);

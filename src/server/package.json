@@ -4,21 +4,9 @@
   "description": "单班级课表服务",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "jest --coverage"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.22.1"
-  },
-  "devDependencies": {
-    "jest": "^29.7.0",
-    "supertest": "^7.0.0"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "coverageDirectory": "coverage",
-    "collectCoverageFrom": [
-      "server.js"
-    ]
   }
 }
