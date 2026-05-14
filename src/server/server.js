@@ -226,7 +226,9 @@ function withSaveLock(fn) {
   const next = saveLock.then(async () => {
     return await fn();
   });
-  saveLock = next.catch(() => {});
+  saveLock = next.catch(err => {
+    console.error('Save failed:', err);
+  });
   return next;
 }
 
@@ -347,6 +349,9 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       if (semesterStart && isValidDateString(semesterStart)) newSchedule.semesterStart = semesterStart;
       if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) newSchedule.totalPeriods = totalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) newSchedule.totalWeeks = totalWeeks;
+      if (totalPeriods !== undefined && !periodSettings) {
+        newSchedule.periodSettings = newSchedule.periodSettings.slice(0, newSchedule.totalPeriods);
+      }
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');
       }
