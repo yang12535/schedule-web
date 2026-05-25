@@ -222,7 +222,7 @@
 
     function isActiveInWeek(c, week) {
       if (!c || typeof c !== 'object') return false;
-      const s = c.startWeek || 1, e = c.endWeek || 20, t = c.weekType || 'all';
+      const s = c.startWeek || 1, e = c.endWeek || totalWeeks, t = c.weekType || 'all';
       if (week < s || week > e) return false;
       return t === 'all' ? true : t === 'odd' ? week % 2 === 1 : week % 2 === 0;
     }
@@ -260,7 +260,7 @@
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
                 ${isEditMode?`<div class="course-actions"><button data-action="edit" data-id="${escapeAttr(c.id)}">✏️</button><button data-action="delete" data-id="${escapeAttr(c.id)}">🗑️</button></div>`:''}
               </div>
-              ${isSkipWeek?'<div class="skip-week-stamp">本周<br>不上</div>':''}
+              ${isSkipWeek?`<div class="skip-week-stamp"${isEditMode?' style="right:92px;"':''}>本周<br>不上</div>`:''}
             </div>`;
         });
       }
