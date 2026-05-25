@@ -245,13 +245,16 @@
       } else {
         const week = getCurrentWeek() + currentWeekOffset;
         [...courses].sort((a,b) => (parsePeriods(a.period)[0]||0) - (parsePeriods(b.period)[0]||0)).forEach(c => {
-          if (!isActiveInWeek(c, week)) return;
-          const isCurrent = isCurrentCourse(c);
+          const isActive = isActiveInWeek(c, week);
+          const isSkipWeek = !isActive && (c.weekType === 'odd' || c.weekType === 'even');
+          if (!isActive && !isSkipWeek) return;
+          const isCurrent = isActive && isCurrentCourse(c);
           // 修复：使用 escapeHtml 防止 XSS
           html += `
-            <div class="course-item ${isCurrent?'current':''}">
+            <div class="course-item ${isCurrent?'current':''}${isSkipWeek?' skip-week':''}">
               <div class="course-time"><span class="period">${escapeHtml(formatPeriod(c.period))}</span><span class="time">${escapeHtml(getTimeText(c.period))}</span></div>
               <div class="course-info" data-type="${escapeAttr(c.type||'')}">
+                ${isSkipWeek?'<div class="skip-week-stamp">本周<br>不上</div>':''}
                 <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
                 <div class="course-meta">${c.location?escapeHtml(`📍${c.location}`):''}${c.teacher?escapeHtml(` | 👤${c.teacher}`):''}</div>
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
