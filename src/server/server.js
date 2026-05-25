@@ -49,6 +49,7 @@ function isValidCourse(course) {
   if (course.teacher !== undefined && course.teacher !== null && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
   if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
   if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
+  if (course.skipWeek !== undefined && course.skipWeek !== null && (!Number.isInteger(course.skipWeek) || course.skipWeek < 1 || course.skipWeek > 30)) return false;
   return true;
 }
 
@@ -62,6 +63,36 @@ function isValidCourses(courses) {
     }
   }
   return true;
+}
+
+function parsePeriodNumbers(period) {
+  if (!period || typeof period !== 'string') return [];
+  const normalized = period.replace(/[第节]/g, '').trim();
+  if (normalized.includes('-')) {
+    const parts = normalized.split('-').map(Number);
+    if (parts.length === 2 && Number.isInteger(parts[0]) && Number.isInteger(parts[1]) && parts[0] > 0 && parts[0] <= parts[1]) {
+      return Array.from({ length: parts[1] - parts[0] + 1 }, (_, i) => parts[0] + i);
+    }
+  }
+  if (normalized.includes(',')) {
+    return normalized.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
+  }
+  const single = Number(normalized);
+  return Number.isInteger(single) && single > 0 ? [single] : [];
+}
+
+function getMaxCoursePeriod(courses) {
+  if (!courses || typeof courses !== 'object') return 0;
+  let max = 0;
+  for (const list of Object.values(courses)) {
+    if (!Array.isArray(list)) continue;
+    for (const course of list) {
+      for (const period of parsePeriodNumbers(course && course.period)) {
+        if (period > max) max = period;
+      }
+    }
+  }
+  return max;
 }
 
 function isValidAnnouncement(a) {
@@ -172,6 +203,20 @@ const defaultPeriods = [
   {startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},
   {startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}
 ];
+
+function resizePeriodSettings(settings, count) {
+  const resized = Array.isArray(settings) ? settings.slice(0, count) : [];
+  while (resized.length < count) {
+    const last = resized[resized.length - 1] || defaultPeriods[resized.length] || defaultPeriods[defaultPeriods.length - 1];
+    const [h, m] = last.startTime.split(':');
+    const nextStart = Number(h) * 60 + Number(m) + last.duration + 10;
+    resized.push({
+      startTime: `${String(Math.floor(nextStart / 60)).padStart(2, '0')}:${String(nextStart % 60).padStart(2, '0')}`,
+      duration: last.duration
+    });
+  }
+  return resized;
+}
 
 const defaultSchedule = {
   name: CLASS_NAME, description: CLASS_DESC, semesterStart: SEMESTER_START,
@@ -586,8 +631,18 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
-      const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : newSchedule.totalPeriods;
-      if (migratedData.periodSettings) {
+      if (!isValidCourses(migratedData.courses)) {
+        throw new HttpError(400, 'Invalid courses structure');
+      }
+      const importedTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : 0;
+      const hasPeriodSettings = migratedData.periodSettings !== undefined && migratedData.periodSettings !== null;
+      const periodSettingsLength = hasPeriodSettings && Array.isArray(migratedData.periodSettings) ? migratedData.periodSettings.length : 0;
+      const maxCoursePeriod = getMaxCoursePeriod(migratedData.courses);
+      const newTotalPeriods = Math.max(importedTotalPeriods || newSchedule.totalPeriods, periodSettingsLength, maxCoursePeriod);
+      if (!Number.isInteger(newTotalPeriods) || newTotalPeriods < 1 || newTotalPeriods > 20) {
+        throw new HttpError(400, 'Invalid totalPeriods');
+      }
+      if (hasPeriodSettings) {
         if (!isValidPeriodSettings(migratedData.periodSettings)) {
           throw new HttpError(400, 'Invalid periodSettings');
         }
@@ -595,15 +650,14 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
           throw new HttpError(400, 'periodSettings length does not match totalPeriods');
         }
         newSchedule.periodSettings = migratedData.periodSettings;
-      }
-      if (!isValidCourses(migratedData.courses)) {
-        throw new HttpError(400, 'Invalid courses structure');
+      } else {
+        newSchedule.periodSettings = resizePeriodSettings(newSchedule.periodSettings, newTotalPeriods);
       }
       newSchedule.courses = migratedData.courses;
       if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) newSchedule.semesterStart = migratedData.semesterStart;
       if (migratedData.name) newSchedule.name = String(migratedData.name).slice(0, 100);
       if (migratedData.description !== undefined) newSchedule.description = String(migratedData.description).slice(0, 200);
-      if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) newSchedule.totalPeriods = migratedData.totalPeriods;
+      newSchedule.totalPeriods = newTotalPeriods;
       if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) newSchedule.totalWeeks = migratedData.totalWeeks;
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');

@@ -211,6 +211,46 @@ describe('Schedule API', () => {
       const res = await request(app).get('/api/schedule').expect(200);
       expect(res.body.name).toBe('导入班级');
     });
+
+    it('导入旧数据时应按 periodSettings 和课程节次修正 totalPeriods', async () => {
+      const periodSettings = Array.from({ length: 13 }, (_, i) => ({
+        startTime: `${String(8 + Math.floor(i / 2)).padStart(2, '0')}:00`,
+        duration: 40
+      }));
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '13节旧课表',
+          totalPeriods: 12,
+          courses: {
+            monday: [{
+              id: 'legacy-13',
+              name: '晚间课程',
+              period: '12-13',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          },
+          periodSettings
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(13);
+      expect(res.body.periodSettings).toHaveLength(13);
+      expect(res.body.courses.monday[0].period).toBe('12-13');
+    });
   });
 
   describe('GET /api/announcements', () => {

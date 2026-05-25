@@ -79,10 +79,12 @@
       start.value = 1; end.value = totalWeeks;
     }
 
-    function initPeriodSettings() {
+    function initPeriodSettings(countOverride) {
       const container = document.getElementById('periodSettingsContainer');
-      const count = +document.getElementById('settingTotalPeriods')?.value || totalPeriods;
+      const override = Number(countOverride);
+      const count = Number.isInteger(override) && override >= 1 && override <= 20 ? override : totalPeriods;
       totalPeriods = count;
+      if (!periodSettings.length) periodSettings = [...defaultPeriods];
       while (periodSettings.length < count) {
         const last = periodSettings[periodSettings.length - 1];
         const [h, m] = last.startTime.split(':'); 
@@ -181,6 +183,7 @@
 
     function isCurrentCourse(c) {
       if (currentWeekOffset !== 0) return false;
+      if (isSkippedInWeek(c, getCurrentWeek())) return false;
       // 修复：周末时不标记任何课程为当前课程
       const today = new Date().getDay();
       if (today === 0 || today === 6) return false;
@@ -207,6 +210,7 @@
       const now = new Date().getHours() * 60 + new Date().getMinutes();
       for (const c of courses) {
         if (!isActiveInWeek(c, week)) continue;
+        if (isSkippedInWeek(c, week)) continue;
         const ps = parsePeriods(c.period);
         if (ps.length === 0) continue;
         const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
@@ -224,7 +228,15 @@
       if (!c || typeof c !== 'object') return false;
       const s = c.startWeek || 1, e = c.endWeek || totalWeeks, t = c.weekType || 'all';
       if (week < s || week > e) return false;
-      return t === 'all' ? true : t === 'odd' ? week % 2 === 1 : week % 2 === 0;
+      if (t === 'odd') return week % 2 === 1;
+      if (t === 'even') return week % 2 === 0;
+      return true;
+    }
+
+    function isSkippedInWeek(c, week) {
+      if (!c || typeof c !== 'object') return false;
+      const skipWeek = Number(c.skipWeek);
+      return Number.isInteger(skipWeek) && skipWeek === getCurrentWeek() && skipWeek === week;
     }
 
     function formatWeekRange(c) {
@@ -246,13 +258,13 @@
         const week = getCurrentWeek() + currentWeekOffset;
         [...courses].sort((a,b) => (parsePeriods(a.period)[0]||0) - (parsePeriods(b.period)[0]||0)).forEach(c => {
           const isActive = isActiveInWeek(c, week);
-          const inWeekRange = week >= (c.startWeek || 1) && week <= (c.endWeek || totalWeeks);
-          const isSkipWeek = !isActive && inWeekRange && (c.weekType === 'odd' || c.weekType === 'even');
-          if (!isActive && !isSkipWeek) return;
-          const isCurrent = isActive && isCurrentCourse(c);
+          if (!isActive) return;
+          const isSkipWeek = isSkippedInWeek(c, week);
+          const isCurrent = !isSkipWeek && isCurrentCourse(c);
+          const courseClass = `course-item${isCurrent?' current':''}${isSkipWeek?' skip-week':''}${isEditMode?' has-actions':''}`;
           // 修复：使用 escapeHtml 防止 XSS
           html += `
-            <div class="course-item ${isCurrent?'current':''}${isSkipWeek?' skip-week':''}">
+            <div class="${courseClass}">
               <div class="course-time"><span class="period">${escapeHtml(formatPeriod(c.period))}</span><span class="time">${escapeHtml(getTimeText(c.period))}</span></div>
               <div class="course-info" data-type="${escapeAttr(c.type||'')}">
                 <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
@@ -260,7 +272,7 @@
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
                 ${isEditMode?`<div class="course-actions"><button data-action="edit" data-id="${escapeAttr(c.id)}">✏️</button><button data-action="delete" data-id="${escapeAttr(c.id)}">🗑️</button></div>`:''}
               </div>
-              ${isSkipWeek?`<div class="skip-week-stamp"${isEditMode?' style="right:92px;"':''}>本周<br>不上</div>`:''}
+              ${isSkipWeek?'<div class="skip-week-stamp">本周<br>不上</div>':''}
             </div>`;
         });
       }
@@ -287,7 +299,9 @@
             dayDiff += 7;
             weekOffset = 1;
           }
-          if (!isActiveInWeek(c, week + weekOffset)) return;
+          const courseWeek = week + weekOffset;
+          if (!isActiveInWeek(c, courseWeek)) return;
+          if (isSkippedInWeek(c, courseWeek)) return;
           time.setDate(time.getDate() + dayDiff);
           time.setHours(+h, +m, 0, 0);
           if (time > now) courses.push({...c, dayName: dayNames[day], time});
@@ -379,6 +393,15 @@
       document.querySelectorAll('.color-option').forEach(o => o.onclick = () => { document.querySelectorAll('.color-option').forEach(x => x.classList.remove('selected')); o.classList.add('selected'); });
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) makeupCb.addEventListener('change', toggleMakeupMode);
+      const skipCb = document.getElementById('courseSkipThisWeek');
+      if (skipCb) {
+        skipCb.addEventListener('change', () => {
+          if (skipCb.checked && makeupCb) {
+            makeupCb.checked = false;
+            toggleMakeupMode();
+          }
+        });
+      }
       ['courseModal','settingsModal','passwordModal','annManageModal'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -582,6 +605,8 @@
       // 重置补课模式
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) { makeupCb.checked = false; toggleMakeupMode(); }
+      const skipCb = document.getElementById('courseSkipThisWeek');
+      if (skipCb) { skipCb.checked = false; skipCb.disabled = false; }
       document.getElementById('courseModal').classList.add('active');
       // 隐藏下一节课卡片，避免遮挡弹窗底部
       const nextCourse = document.getElementById('nextCourse');
@@ -614,6 +639,7 @@
       
       const type = document.querySelector('.color-option.selected')?.dataset.type || '';
       const isMakeup = document.getElementById('courseMakeup')?.checked || false;
+      const skipThisWeek = !isMakeup && (document.getElementById('courseSkipThisWeek')?.checked || false);
       const startWeek = +document.getElementById('courseStartWeek').value;
       const endWeek = +document.getElementById('courseEndWeek').value;
       if (startWeek > endWeek) {
@@ -630,6 +656,7 @@
         weekType: document.getElementById('courseWeekType').value,
         isMakeup
       };
+      if (skipThisWeek) course.skipWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek()));
       
       if (editingCourseId) {
         Object.keys(schedule.courses).forEach(d => {
@@ -668,6 +695,8 @@
         : c.startWeek === c.endWeek && c.weekType === 'all';
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) { makeupCb.checked = isMakeup; toggleMakeupMode(); }
+      const skipCb = document.getElementById('courseSkipThisWeek');
+      if (skipCb) { skipCb.checked = !isMakeup && isSkippedInWeek(c, getCurrentWeek()); skipCb.disabled = !!isMakeup; }
       document.querySelectorAll('.color-option').forEach(o => o.classList.toggle('selected', o.dataset.type === (c.type || '')));
       document.getElementById('courseModal').classList.add('active');
     }
@@ -987,6 +1016,7 @@
       const startSel = document.getElementById('courseStartWeek');
       const endSel = document.getElementById('courseEndWeek');
       const weekType = document.getElementById('courseWeekType');
+      const skipCb = document.getElementById('courseSkipThisWeek');
       if (!checkbox || !hint) return;
       if (checkbox.checked) {
         const currentWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek() + currentWeekOffset));
@@ -998,11 +1028,13 @@
         startSel.disabled = true;
         endSel.disabled = true;
         weekType.disabled = true;
+        if (skipCb) { skipCb.checked = false; skipCb.disabled = true; }
       } else {
         hint.style.display = 'none';
         startSel.disabled = false;
         endSel.disabled = false;
         weekType.disabled = false;
+        if (skipCb) skipCb.disabled = false;
       }
     }
 
