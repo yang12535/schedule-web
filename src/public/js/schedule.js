@@ -229,7 +229,7 @@
 
     function formatWeekRange(c) {
       if (!c) return '';
-      let t = `第${c.startWeek||1}-${c.endWeek||16}周`;
+      let t = `第${c.startWeek||1}-${c.endWeek||totalWeeks}周`;
       if (c.weekType === 'odd') t += '（单周）';
       else if (c.weekType === 'even') t += '（双周）';
       return t;
