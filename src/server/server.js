@@ -204,14 +204,25 @@ const defaultPeriods = [
   {startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}
 ];
 
+function formatClockTime(minutes) {
+  const minutesInDay = 24 * 60;
+  const normalized = ((minutes % minutesInDay) + minutesInDay) % minutesInDay;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+
 function resizePeriodSettings(settings, count) {
-  const resized = Array.isArray(settings) ? settings.slice(0, count) : [];
+  const resized = Array.isArray(settings) ? settings.slice(0, count).map(p => ({ ...p })) : [];
   while (resized.length < count) {
-    const last = resized[resized.length - 1] || defaultPeriods[resized.length] || defaultPeriods[defaultPeriods.length - 1];
+    const preset = defaultPeriods[resized.length];
+    if (preset) {
+      resized.push({ ...preset });
+      continue;
+    }
+    const last = resized[resized.length - 1] || defaultPeriods[defaultPeriods.length - 1];
     const [h, m] = last.startTime.split(':');
     const nextStart = Number(h) * 60 + Number(m) + last.duration + 10;
     resized.push({
-      startTime: `${String(Math.floor(nextStart / 60)).padStart(2, '0')}:${String(nextStart % 60).padStart(2, '0')}`,
+      startTime: formatClockTime(nextStart),
       duration: last.duration
     });
   }
@@ -652,6 +663,9 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
         newSchedule.periodSettings = migratedData.periodSettings;
       } else {
         newSchedule.periodSettings = resizePeriodSettings(newSchedule.periodSettings, newTotalPeriods);
+      }
+      if (!isValidPeriodSettings(newSchedule.periodSettings)) {
+        throw new HttpError(400, 'Invalid periodSettings');
       }
       newSchedule.courses = migratedData.courses;
       if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) newSchedule.semesterStart = migratedData.semesterStart;

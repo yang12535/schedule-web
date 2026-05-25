@@ -24,6 +24,12 @@
                          .replace(/>/g, '&gt;');
     }
 
+    function formatClockTime(minutes) {
+      const minutesInDay = 24 * 60;
+      const normalized = ((minutes % minutesInDay) + minutesInDay) % minutesInDay;
+      return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+    }
+
     async function init() {
       try {
         await loadSchedule();
@@ -86,10 +92,15 @@
       totalPeriods = count;
       if (!periodSettings.length) periodSettings = [...defaultPeriods];
       while (periodSettings.length < count) {
+        const preset = defaultPeriods[periodSettings.length];
+        if (preset) {
+          periodSettings.push({ ...preset });
+          continue;
+        }
         const last = periodSettings[periodSettings.length - 1];
         const [h, m] = last.startTime.split(':'); 
         const totalMin = +h * 60 + +m + last.duration + 10;
-        periodSettings.push({startTime: `${String(Math.floor(totalMin/60)).padStart(2,'0')}:${String(totalMin%60).padStart(2,'0')}`, duration: 45});
+        periodSettings.push({startTime: formatClockTime(totalMin), duration: last.duration || 45});
       }
       if (container) {
         container.innerHTML = periodSettings.slice(0, count).map((p, i) => `
@@ -177,7 +188,7 @@
       if (!ps.length) return '';
       const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
       if (!first || !last) return '';
-      const end = (([h,m]) => { const t = +h*60 + +m + last.duration; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; })(last.startTime.split(':'));
+      const end = (([h,m]) => formatClockTime(+h*60 + +m + last.duration))(last.startTime.split(':'));
       return `${first.startTime}-${end}`;
     }
 
@@ -401,6 +412,12 @@
             toggleMakeupMode();
           }
         });
+      }
+      const totalPeriodsInput = document.getElementById('settingTotalPeriods');
+      if (totalPeriodsInput) {
+        const updatePeriodSettings = () => initPeriodSettings(+totalPeriodsInput.value);
+        totalPeriodsInput.addEventListener('input', updatePeriodSettings);
+        totalPeriodsInput.addEventListener('change', updatePeriodSettings);
       }
       ['courseModal','settingsModal','passwordModal','annManageModal'].forEach(id => {
         const el = document.getElementById(id);

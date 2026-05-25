@@ -251,6 +251,58 @@ describe('Schedule API', () => {
       expect(res.body.periodSettings).toHaveLength(13);
       expect(res.body.courses.monday[0].period).toBe('12-13');
     });
+
+    it('导入旧数据自动补齐大节次时不应生成 24 点后的时间', async () => {
+      const latePeriodSettings = Array.from({ length: 14 }, (_, i) => ({
+        startTime: i === 13
+          ? '23:35'
+          : `${String(8 + Math.floor(i / 2)).padStart(2, '0')}:${String((i % 2) * 30).padStart(2, '0')}`,
+        duration: 45
+      }));
+
+      await request(app)
+        .put('/api/schedule/settings')
+        .send({
+          password: 'test123',
+          totalPeriods: 14,
+          periodSettings: latePeriodSettings
+        })
+        .expect(200);
+
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '20节旧课表',
+          totalPeriods: 20,
+          courses: {
+            monday: [{
+              id: 'legacy-20',
+              name: '跨午夜课程',
+              period: '20',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          }
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(20);
+      expect(res.body.periodSettings).toHaveLength(20);
+      expect(res.body.periodSettings[14].startTime).toBe('00:30');
+      expect(res.body.periodSettings.every(p => /^([01]\d|2[0-3]):([0-5]\d)$/.test(p.startTime))).toBe(true);
+    });
   });
 
   describe('GET /api/announcements', () => {
