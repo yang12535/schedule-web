@@ -339,15 +339,25 @@
             dayDiff += 7;
             weekOffset = 1;
           }
-          const courseWeek = week + weekOffset;
-          if (!isActiveInWeek(c, courseWeek)) return;
-          if (isSkippedInWeek(c, courseWeek)) return;
-          time.setDate(time.getDate() + dayDiff);
-          time.setHours(+h, +m, 0, 0);
-          if (time > now) courses.push({...c, dayName: dayNames[day], time});
+          for (let extraWeeks = 0; week + weekOffset + extraWeeks <= totalWeeks; extraWeeks++) {
+            const courseWeek = week + weekOffset + extraWeeks;
+            if (!isActiveInWeek(c, courseWeek)) continue;
+            if (isSkippedInWeek(c, courseWeek)) continue;
+            const candidateTime = new Date(time);
+            candidateTime.setDate(time.getDate() + dayDiff + extraWeeks * 7);
+            candidateTime.setHours(+h, +m, 0, 0);
+            if (candidateTime > now) {
+              courses.push({...c, dayName: dayNames[day], time: candidateTime});
+              break;
+            }
+          }
         });
       });
       return courses.sort((a,b) => a.time - b.time)[0] || null;
+    }
+
+    function isSameDate(a, b) {
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     }
 
     function formatRemaining(minutes) {
@@ -415,9 +425,7 @@
         el.classList.remove('in-class', 'no-class');
         const diff = next.time - new Date();
         const diffMins = Math.floor(diff / 60000);
-        const todayIndex = new Date().getDay() - 1;
-        const todayKey = ['monday','tuesday','wednesday','thursday','friday'][todayIndex];
-        const isToday = todayKey && next.dayName === dayNames[todayKey];
+        const isToday = isSameDate(next.time, new Date());
         
         let html = `<div class="next-course-title">⏰ 下一节课</div>`;
         html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
