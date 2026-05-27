@@ -322,6 +322,7 @@
     function findNextCourse() {
       if (!schedule) return null;
       const now = new Date(), week = getCurrentWeek() + currentWeekOffset, dayOrder = ['monday','tuesday','wednesday','thursday','friday'];
+      const semesterStart = new Date(schedule.semesterStart);
       const courses = [];
       dayOrder.forEach((day, i) => {
         (schedule.courses[day] || []).forEach(c => {
@@ -330,21 +331,10 @@
           const setting = periodSettings[ps[0]-1];
           if (!setting) return;
           const [h, m] = setting.startTime.split(':');
-          const time = new Date(now);
-          // 修复：正确计算课程日期（周日 getDay()=0 视为 7）
-          const todayDay = time.getDay() === 0 ? 7 : time.getDay();
-          let dayDiff = (i + 1) - todayDay;
-          let weekOffset = 0;
-          if (dayDiff < 0) {
-            dayDiff += 7;
-            weekOffset = 1;
-          }
-          for (let extraWeeks = 0; week + weekOffset + extraWeeks <= totalWeeks; extraWeeks++) {
-            const courseWeek = week + weekOffset + extraWeeks;
+          for (let courseWeek = Math.max(1, week); courseWeek <= totalWeeks; courseWeek++) {
             if (!isActiveInWeek(c, courseWeek)) continue;
             if (isSkippedInWeek(c, courseWeek)) continue;
-            const candidateTime = new Date(time);
-            candidateTime.setDate(time.getDate() + dayDiff + extraWeeks * 7);
+            const candidateTime = new Date(semesterStart.getTime() + (courseWeek - 1) * 604800000 + i * 86400000);
             candidateTime.setHours(+h, +m, 0, 0);
             if (candidateTime > now) {
               courses.push({...c, dayName: dayNames[day], time: candidateTime});
@@ -398,7 +388,7 @@
           
           let html = `<div class="next-course-title">⏰ 下一节课</div>`;
           html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
-          html += `<div class="next-course-info">${escapeHtml(next.dayName === current.dayName ? '今天' : next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
+          html += `<div class="next-course-info">${isSameDate(next.time, new Date()) ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
           html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
           // 小字显示当前课即将结束
           html += `<div class="next-course-secondary">${escapeHtml(current.name)} · 剩余${formatRemaining(current.remaining)}下课</div>`;
@@ -413,7 +403,7 @@
           if (next) {
             const diff = next.time - new Date();
             const diffMins = Math.floor(diff / 60000);
-            html += `<div class="next-course-secondary">下一节课：${escapeHtml(next.name)}（${escapeHtml(next.dayName === current.dayName ? '今天' : next.dayName)}，还有${formatRemaining(diffMins)}）</div>`;
+            html += `<div class="next-course-secondary">下一节课：${escapeHtml(next.name)}（${isSameDate(next.time, new Date()) ? '今天' : escapeHtml(next.dayName)}，还有${formatRemaining(diffMins)}）</div>`;
           }
           content.innerHTML = html;
         }
@@ -725,6 +715,7 @@
         document.querySelectorAll('.day-tab').forEach(t => t.classList.toggle('active', t.dataset.day === day)); 
       }
       renderSchedule();
+      updateNextCourse();
       // 自动保存
       await autoSave();
     }
