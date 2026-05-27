@@ -657,10 +657,7 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
         if (!isValidPeriodSettings(migratedData.periodSettings)) {
           throw new HttpError(400, 'Invalid periodSettings');
         }
-        if (migratedData.periodSettings.length !== newTotalPeriods) {
-          throw new HttpError(400, 'periodSettings length does not match totalPeriods');
-        }
-        newSchedule.periodSettings = migratedData.periodSettings;
+        newSchedule.periodSettings = resizePeriodSettings(migratedData.periodSettings, newTotalPeriods);
       } else {
         newSchedule.periodSettings = resizePeriodSettings(newSchedule.periodSettings, newTotalPeriods);
       }

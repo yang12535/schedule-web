@@ -6,6 +6,7 @@
     const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
     const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
     let periodSettings = [...defaultPeriods];
+    let settingsPeriodDraft = null;
 
     // XSS 防护：转义 HTML 特殊字符
     function escapeHtml(text) {
@@ -28,6 +29,54 @@
       const minutesInDay = 24 * 60;
       const normalized = ((minutes % minutesInDay) + minutesInDay) % minutesInDay;
       return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+    }
+
+    function clonePeriodSettings(settings) {
+      return Array.isArray(settings) ? settings.map(p => ({ ...p })) : [];
+    }
+
+    function resizePeriodSettingsForCount(settings, count) {
+      const resized = clonePeriodSettings(settings).slice(0, count);
+      while (resized.length < count) {
+        const preset = defaultPeriods[resized.length];
+        if (preset) {
+          resized.push({ ...preset });
+          continue;
+        }
+        const last = resized[resized.length - 1] || defaultPeriods[defaultPeriods.length - 1];
+        const [h, m] = (last.startTime || '08:00').split(':');
+        const duration = Number(last.duration) || 45;
+        const totalMin = +h * 60 + +m + duration + 10;
+        resized.push({ startTime: formatClockTime(totalMin), duration });
+      }
+      return resized;
+    }
+
+    function syncSettingsDraftFromDom() {
+      if (!settingsPeriodDraft) return;
+      for (let i = 0; i < settingsPeriodDraft.length; i++) {
+        const timeInput = document.getElementById(`periodTime${i}`);
+        const durationInput = document.getElementById(`periodDuration${i}`);
+        if (timeInput && durationInput) {
+          settingsPeriodDraft[i] = {
+            startTime: timeInput.value || settingsPeriodDraft[i].startTime,
+            duration: +durationInput.value || settingsPeriodDraft[i].duration || 45
+          };
+        }
+      }
+    }
+
+    function renderPeriodSettingsForm(settings, count) {
+      const container = document.getElementById('periodSettingsContainer');
+      if (!container) return;
+      container.innerHTML = settings.slice(0, count).map((p, i) => `
+        <div class="period-setting">
+          <label>第${i+1}节</label>
+          <input type="time" id="periodTime${i}" value="${escapeAttr(p.startTime)}">
+          <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
+          <span style="font-size:12px;color:var(--gray-400);">分钟</span>
+        </div>
+      `).join('');
     }
 
     async function init() {
@@ -86,32 +135,12 @@
     }
 
     function initPeriodSettings(countOverride) {
-      const container = document.getElementById('periodSettingsContainer');
       const override = Number(countOverride);
-      const count = Number.isInteger(override) && override >= 1 && override <= 20 ? override : totalPeriods;
-      totalPeriods = count;
-      if (!periodSettings.length) periodSettings = [...defaultPeriods];
-      while (periodSettings.length < count) {
-        const preset = defaultPeriods[periodSettings.length];
-        if (preset) {
-          periodSettings.push({ ...preset });
-          continue;
-        }
-        const last = periodSettings[periodSettings.length - 1];
-        const [h, m] = last.startTime.split(':'); 
-        const totalMin = +h * 60 + +m + last.duration + 10;
-        periodSettings.push({startTime: formatClockTime(totalMin), duration: last.duration || 45});
-      }
-      if (container) {
-        container.innerHTML = periodSettings.slice(0, count).map((p, i) => `
-          <div class="period-setting">
-            <label>第${i+1}节</label>
-            <input type="time" id="periodTime${i}" value="${escapeAttr(p.startTime)}">
-            <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
-            <span style="font-size:12px;color:var(--gray-400);">分钟</span>
-          </div>
-        `).join('');
-      }
+      const baseCount = settingsPeriodDraft ? settingsPeriodDraft.length : totalPeriods;
+      const count = Number.isInteger(override) && override >= 1 && override <= 20 ? override : baseCount;
+      syncSettingsDraftFromDom();
+      settingsPeriodDraft = resizePeriodSettingsForCount(settingsPeriodDraft || periodSettings, count);
+      renderPeriodSettingsForm(settingsPeriodDraft, count);
     }
 
     function setCurrentDayByDate() {
@@ -560,7 +589,8 @@
       document.getElementById('settingSemesterStart').value = schedule.semesterStart || '';
       document.getElementById('settingTotalPeriods').value = totalPeriods;
       document.getElementById('settingTotalWeeks').value = totalWeeks;
-      initPeriodSettings();
+      settingsPeriodDraft = resizePeriodSettingsForCount(periodSettings, totalPeriods);
+      renderPeriodSettingsForm(settingsPeriodDraft, totalPeriods);
       document.getElementById('settingsModal').classList.add('active');
       // 隐藏下一节课卡片
       const nextCourse = document.getElementById('nextCourse');
@@ -569,6 +599,7 @@
 
     function closeSettingsModal() { 
       document.getElementById('settingsModal').classList.remove('active'); 
+      settingsPeriodDraft = null;
       // 恢复下一节课卡片显示
       const nextCourse = document.getElementById('nextCourse');
       if (nextCourse) nextCourse.style.display = 'block';
@@ -578,21 +609,19 @@
       const name = document.getElementById('settingClassName').value.trim();
       const description = document.getElementById('settingClassDesc').value.trim();
       const semesterStart = document.getElementById('settingSemesterStart').value;
-      const newTotalPeriods = +document.getElementById('settingTotalPeriods').value || 12;
+      const newTotalPeriods = Number(document.getElementById('settingTotalPeriods').value);
       const newTotalWeeks = +document.getElementById('settingTotalWeeks').value || 16;
-      const newPeriodSettings = [];
-      for (let i = 0; i < newTotalPeriods; i++) {
-        const timeInput = document.getElementById(`periodTime${i}`);
-        const durationInput = document.getElementById(`periodDuration${i}`);
-        if (timeInput && durationInput) {
-          newPeriodSettings.push({startTime: timeInput.value, duration: +durationInput.value || 45});
-        }
+      if (!Number.isInteger(newTotalPeriods) || newTotalPeriods < 1 || newTotalPeriods > 20) {
+        return showToast('总节数应在 1-20 范围内', 'error');
       }
+      syncSettingsDraftFromDom();
+      const newPeriodSettings = resizePeriodSettingsForCount(settingsPeriodDraft || periodSettings, newTotalPeriods);
       try {
         const res = await fetch('/api/schedule/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:sessionStorage.getItem('scheduleEditPwd')||'',name,description,semesterStart,totalPeriods:newTotalPeriods,totalWeeks:newTotalWeeks,periodSettings:newPeriodSettings})});
         const data = await res.json();
         if (data.success) {
           schedule.name = name; schedule.description = description; schedule.semesterStart = semesterStart;
+          schedule.totalPeriods = newTotalPeriods; schedule.totalWeeks = newTotalWeeks; schedule.periodSettings = newPeriodSettings;
           totalPeriods = newTotalPeriods; totalWeeks = newTotalWeeks; periodSettings = newPeriodSettings;
           initWeekOptions();
           document.getElementById('className').textContent = name;

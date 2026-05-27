@@ -252,6 +252,47 @@ describe('Schedule API', () => {
       expect(res.body.courses.monday[0].period).toBe('12-13');
     });
 
+    it('导入旧数据时应补齐短于课程节次的 periodSettings', async () => {
+      const periodSettings = Array.from({ length: 12 }, (_, i) => ({
+        startTime: `${String(8 + i).padStart(2, '0')}:00`,
+        duration: 45
+      }));
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '短节次设置旧课表',
+          totalPeriods: 12,
+          courses: {
+            monday: [{
+              id: 'legacy-short-settings',
+              name: '第十三节课程',
+              period: '13',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          },
+          periodSettings
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(13);
+      expect(res.body.periodSettings).toHaveLength(13);
+      expect(res.body.periodSettings[12].startTime).toBe('19:55');
+      expect(res.body.courses.monday[0].period).toBe('13');
+    });
+
     it('导入旧数据自动补齐大节次时不应生成 24 点后的时间', async () => {
       const latePeriodSettings = Array.from({ length: 14 }, (_, i) => ({
         startTime: i === 13
