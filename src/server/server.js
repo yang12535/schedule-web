@@ -49,6 +49,7 @@ function isValidCourse(course) {
   if (course.teacher !== undefined && course.teacher !== null && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
   if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
   if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
+  if (course.skipWeek !== undefined && course.skipWeek !== null && (!Number.isInteger(course.skipWeek) || course.skipWeek < 1 || course.skipWeek > 30)) return false;
   return true;
 }
 
@@ -62,6 +63,45 @@ function isValidCourses(courses) {
     }
   }
   return true;
+}
+
+function parsePositivePeriodNumber(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : 0;
+}
+
+function getMaxPeriodNumber(period) {
+  if (!period || typeof period !== 'string') return 0;
+  const normalized = period.replace(/[第节]/g, '').trim();
+  if (normalized.includes('-')) {
+    const parts = normalized.split('-').map(part => part.trim());
+    if (parts.length === 2) {
+      const start = parsePositivePeriodNumber(parts[0]);
+      const end = parsePositivePeriodNumber(parts[1]);
+      if (start > 0 && end > 0 && start <= end) return end;
+    }
+    return 0;
+  }
+  if (normalized.includes(',')) {
+    return normalized.split(',').reduce((max, part) => {
+      const number = parsePositivePeriodNumber(part.trim());
+      return number > max ? number : max;
+    }, 0);
+  }
+  return parsePositivePeriodNumber(normalized);
+}
+
+function getMaxCoursePeriod(courses) {
+  if (!courses || typeof courses !== 'object') return 0;
+  let max = 0;
+  for (const list of Object.values(courses)) {
+    if (!Array.isArray(list)) continue;
+    for (const course of list) {
+      const period = getMaxPeriodNumber(course && course.period);
+      if (period > max) max = period;
+    }
+  }
+  return max;
 }
 
 function isValidAnnouncement(a) {
@@ -173,6 +213,31 @@ const defaultPeriods = [
   {startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}
 ];
 
+function formatClockTime(minutes) {
+  const minutesInDay = 24 * 60;
+  const normalized = ((minutes % minutesInDay) + minutesInDay) % minutesInDay;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+
+function resizePeriodSettings(settings, count) {
+  const resized = Array.isArray(settings) ? settings.slice(0, count).map(p => ({ ...p })) : [];
+  while (resized.length < count) {
+    const preset = defaultPeriods[resized.length];
+    if (preset) {
+      resized.push({ ...preset });
+      continue;
+    }
+    const last = resized[resized.length - 1] || defaultPeriods[defaultPeriods.length - 1];
+    const [h, m] = last.startTime.split(':');
+    const nextStart = Number(h) * 60 + Number(m) + last.duration + 10;
+    resized.push({
+      startTime: formatClockTime(nextStart),
+      duration: last.duration
+    });
+  }
+  return resized;
+}
+
 const defaultSchedule = {
   name: CLASS_NAME, description: CLASS_DESC, semesterStart: SEMESTER_START,
   updatedAt: new Date().toISOString(), totalPeriods: 12, totalWeeks: 16,
@@ -227,7 +292,9 @@ function withSaveLock(fn) {
     return await fn();
   });
   saveLock = next.catch(err => {
-    console.error('Save failed:', err);
+    if (!(err instanceof HttpError)) {
+      console.error('Save failed:', err);
+    }
   });
   return next;
 }
@@ -586,24 +653,33 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
-      const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : newSchedule.totalPeriods;
-      if (migratedData.periodSettings) {
+      if (!isValidCourses(migratedData.courses)) {
+        throw new HttpError(400, 'Invalid courses structure');
+      }
+      const importedTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : 0;
+      const hasPeriodSettings = migratedData.periodSettings !== undefined && migratedData.periodSettings !== null;
+      const periodSettingsLength = hasPeriodSettings && Array.isArray(migratedData.periodSettings) ? migratedData.periodSettings.length : 0;
+      const maxCoursePeriod = getMaxCoursePeriod(migratedData.courses);
+      const newTotalPeriods = Math.max(importedTotalPeriods || newSchedule.totalPeriods, periodSettingsLength, maxCoursePeriod);
+      if (!Number.isInteger(newTotalPeriods) || newTotalPeriods < 1 || newTotalPeriods > 20) {
+        throw new HttpError(400, 'Invalid totalPeriods');
+      }
+      if (hasPeriodSettings) {
         if (!isValidPeriodSettings(migratedData.periodSettings)) {
           throw new HttpError(400, 'Invalid periodSettings');
         }
-        if (migratedData.periodSettings.length !== newTotalPeriods) {
-          throw new HttpError(400, 'periodSettings length does not match totalPeriods');
-        }
-        newSchedule.periodSettings = migratedData.periodSettings;
+        newSchedule.periodSettings = resizePeriodSettings(migratedData.periodSettings, newTotalPeriods);
+      } else {
+        newSchedule.periodSettings = resizePeriodSettings(newSchedule.periodSettings, newTotalPeriods);
       }
-      if (!isValidCourses(migratedData.courses)) {
-        throw new HttpError(400, 'Invalid courses structure');
+      if (!isValidPeriodSettings(newSchedule.periodSettings)) {
+        throw new HttpError(400, 'Invalid periodSettings');
       }
       newSchedule.courses = migratedData.courses;
       if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) newSchedule.semesterStart = migratedData.semesterStart;
       if (migratedData.name) newSchedule.name = String(migratedData.name).slice(0, 100);
       if (migratedData.description !== undefined) newSchedule.description = String(migratedData.description).slice(0, 200);
-      if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) newSchedule.totalPeriods = migratedData.totalPeriods;
+      newSchedule.totalPeriods = newTotalPeriods;
       if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) newSchedule.totalWeeks = migratedData.totalWeeks;
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');

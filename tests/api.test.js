@@ -211,6 +211,171 @@ describe('Schedule API', () => {
       const res = await request(app).get('/api/schedule').expect(200);
       expect(res.body.name).toBe('导入班级');
     });
+
+    it('导入旧数据时应按 periodSettings 和课程节次修正 totalPeriods', async () => {
+      const periodSettings = Array.from({ length: 13 }, (_, i) => ({
+        startTime: `${String(8 + Math.floor(i / 2)).padStart(2, '0')}:00`,
+        duration: 40
+      }));
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '13节旧课表',
+          totalPeriods: 12,
+          courses: {
+            monday: [{
+              id: 'legacy-13',
+              name: '晚间课程',
+              period: '12-13',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          },
+          periodSettings
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(13);
+      expect(res.body.periodSettings).toHaveLength(13);
+      expect(res.body.courses.monday[0].period).toBe('12-13');
+    });
+
+    it('导入旧数据时应补齐短于课程节次的 periodSettings', async () => {
+      const periodSettings = Array.from({ length: 12 }, (_, i) => ({
+        startTime: `${String(8 + i).padStart(2, '0')}:00`,
+        duration: 45
+      }));
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '短节次设置旧课表',
+          totalPeriods: 12,
+          courses: {
+            monday: [{
+              id: 'legacy-short-settings',
+              name: '第十三节课程',
+              period: '13',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          },
+          periodSettings
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(13);
+      expect(res.body.periodSettings).toHaveLength(13);
+      expect(res.body.periodSettings[12].startTime).toBe('19:55');
+      expect(res.body.courses.monday[0].period).toBe('13');
+    });
+
+    it('导入旧数据自动补齐大节次时不应生成 24 点后的时间', async () => {
+      const latePeriodSettings = Array.from({ length: 14 }, (_, i) => ({
+        startTime: i === 13
+          ? '23:35'
+          : `${String(8 + Math.floor(i / 2)).padStart(2, '0')}:${String((i % 2) * 30).padStart(2, '0')}`,
+        duration: 45
+      }));
+
+      await request(app)
+        .put('/api/schedule/settings')
+        .send({
+          password: 'test123',
+          totalPeriods: 14,
+          periodSettings: latePeriodSettings
+        })
+        .expect(200);
+
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '20节旧课表',
+          totalPeriods: 20,
+          courses: {
+            monday: [{
+              id: 'legacy-20',
+              name: '跨午夜课程',
+              period: '20',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          }
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(20);
+      expect(res.body.periodSettings).toHaveLength(20);
+      expect(res.body.periodSettings[14].startTime).toBe('00:30');
+      expect(res.body.periodSettings.every(p => /^([01]\d|2[0-3]):([0-5]\d)$/.test(p.startTime))).toBe(true);
+    });
+
+    it('导入超大节次范围时应返回 400 而不是展开范围', async () => {
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '超大节次旧课表',
+          totalPeriods: 12,
+          courses: {
+            monday: [{
+              id: 'legacy-huge-range',
+              name: '异常范围课程',
+              period: '1-999999999999999999',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          }
+        }
+      };
+
+      const res = await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid totalPeriods');
+    });
   });
 
   describe('GET /api/announcements', () => {

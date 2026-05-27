@@ -6,6 +6,7 @@
     const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
     const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
     let periodSettings = [...defaultPeriods];
+    let settingsPeriodDraft = null;
 
     // XSS 防护：转义 HTML 特殊字符
     function escapeHtml(text) {
@@ -22,6 +23,60 @@
                          .replace(/'/g, '&#39;')
                          .replace(/</g, '&lt;')
                          .replace(/>/g, '&gt;');
+    }
+
+    function formatClockTime(minutes) {
+      const minutesInDay = 24 * 60;
+      const normalized = ((minutes % minutesInDay) + minutesInDay) % minutesInDay;
+      return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+    }
+
+    function clonePeriodSettings(settings) {
+      return Array.isArray(settings) ? settings.map(p => ({ ...p })) : [];
+    }
+
+    function resizePeriodSettingsForCount(settings, count) {
+      const resized = clonePeriodSettings(settings).slice(0, count);
+      while (resized.length < count) {
+        const preset = defaultPeriods[resized.length];
+        if (preset) {
+          resized.push({ ...preset });
+          continue;
+        }
+        const last = resized[resized.length - 1] || defaultPeriods[defaultPeriods.length - 1];
+        const [h, m] = (last.startTime || '08:00').split(':');
+        const duration = Number(last.duration) || 45;
+        const totalMin = +h * 60 + +m + duration + 10;
+        resized.push({ startTime: formatClockTime(totalMin), duration });
+      }
+      return resized;
+    }
+
+    function syncSettingsDraftFromDom() {
+      if (!settingsPeriodDraft) return;
+      for (let i = 0; i < settingsPeriodDraft.length; i++) {
+        const timeInput = document.getElementById(`periodTime${i}`);
+        const durationInput = document.getElementById(`periodDuration${i}`);
+        if (timeInput && durationInput) {
+          settingsPeriodDraft[i] = {
+            startTime: timeInput.value || settingsPeriodDraft[i].startTime,
+            duration: +durationInput.value || settingsPeriodDraft[i].duration || 45
+          };
+        }
+      }
+    }
+
+    function renderPeriodSettingsForm(settings, count) {
+      const container = document.getElementById('periodSettingsContainer');
+      if (!container) return;
+      container.innerHTML = settings.slice(0, count).map((p, i) => `
+        <div class="period-setting">
+          <label>第${i+1}节</label>
+          <input type="time" id="periodTime${i}" value="${escapeAttr(p.startTime)}">
+          <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
+          <span style="font-size:12px;color:var(--gray-400);">分钟</span>
+        </div>
+      `).join('');
     }
 
     async function init() {
@@ -79,26 +134,13 @@
       start.value = 1; end.value = totalWeeks;
     }
 
-    function initPeriodSettings() {
-      const container = document.getElementById('periodSettingsContainer');
-      const count = +document.getElementById('settingTotalPeriods')?.value || totalPeriods;
-      totalPeriods = count;
-      while (periodSettings.length < count) {
-        const last = periodSettings[periodSettings.length - 1];
-        const [h, m] = last.startTime.split(':'); 
-        const totalMin = +h * 60 + +m + last.duration + 10;
-        periodSettings.push({startTime: `${String(Math.floor(totalMin/60)).padStart(2,'0')}:${String(totalMin%60).padStart(2,'0')}`, duration: 45});
-      }
-      if (container) {
-        container.innerHTML = periodSettings.slice(0, count).map((p, i) => `
-          <div class="period-setting">
-            <label>第${i+1}节</label>
-            <input type="time" id="periodTime${i}" value="${escapeAttr(p.startTime)}">
-            <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
-            <span style="font-size:12px;color:var(--gray-400);">分钟</span>
-          </div>
-        `).join('');
-      }
+    function initPeriodSettings(countOverride) {
+      const override = Number(countOverride);
+      const baseCount = settingsPeriodDraft ? settingsPeriodDraft.length : totalPeriods;
+      const count = Number.isInteger(override) && override >= 1 && override <= 20 ? override : baseCount;
+      syncSettingsDraftFromDom();
+      settingsPeriodDraft = resizePeriodSettingsForCount(settingsPeriodDraft || periodSettings, count);
+      renderPeriodSettingsForm(settingsPeriodDraft, count);
     }
 
     function setCurrentDayByDate() {
@@ -175,12 +217,13 @@
       if (!ps.length) return '';
       const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
       if (!first || !last) return '';
-      const end = (([h,m]) => { const t = +h*60 + +m + last.duration; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; })(last.startTime.split(':'));
+      const end = (([h,m]) => formatClockTime(+h*60 + +m + last.duration))(last.startTime.split(':'));
       return `${first.startTime}-${end}`;
     }
 
     function isCurrentCourse(c) {
       if (currentWeekOffset !== 0) return false;
+      if (isSkippedInWeek(c, getCurrentWeek())) return false;
       // 修复：周末时不标记任何课程为当前课程
       const today = new Date().getDay();
       if (today === 0 || today === 6) return false;
@@ -207,6 +250,7 @@
       const now = new Date().getHours() * 60 + new Date().getMinutes();
       for (const c of courses) {
         if (!isActiveInWeek(c, week)) continue;
+        if (isSkippedInWeek(c, week)) continue;
         const ps = parsePeriods(c.period);
         if (ps.length === 0) continue;
         const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
@@ -222,14 +266,22 @@
 
     function isActiveInWeek(c, week) {
       if (!c || typeof c !== 'object') return false;
-      const s = c.startWeek || 1, e = c.endWeek || 20, t = c.weekType || 'all';
+      const s = c.startWeek || 1, e = c.endWeek || totalWeeks, t = c.weekType || 'all';
       if (week < s || week > e) return false;
-      return t === 'all' ? true : t === 'odd' ? week % 2 === 1 : week % 2 === 0;
+      if (t === 'odd') return week % 2 === 1;
+      if (t === 'even') return week % 2 === 0;
+      return true;
+    }
+
+    function isSkippedInWeek(c, week) {
+      if (!c || typeof c !== 'object') return false;
+      const skipWeek = Number(c.skipWeek);
+      return Number.isInteger(skipWeek) && skipWeek === getCurrentWeek() && skipWeek === week;
     }
 
     function formatWeekRange(c) {
       if (!c) return '';
-      let t = `第${c.startWeek||1}-${c.endWeek||16}周`;
+      let t = `第${c.startWeek||1}-${c.endWeek||totalWeeks}周`;
       if (c.weekType === 'odd') t += '（单周）';
       else if (c.weekType === 'even') t += '（双周）';
       return t;
@@ -245,11 +297,14 @@
       } else {
         const week = getCurrentWeek() + currentWeekOffset;
         [...courses].sort((a,b) => (parsePeriods(a.period)[0]||0) - (parsePeriods(b.period)[0]||0)).forEach(c => {
-          if (!isActiveInWeek(c, week)) return;
-          const isCurrent = isCurrentCourse(c);
+          const isActive = isActiveInWeek(c, week);
+          if (!isActive) return;
+          const isSkipWeek = isSkippedInWeek(c, week);
+          const isCurrent = !isSkipWeek && isCurrentCourse(c);
+          const courseClass = `course-item${isCurrent?' current':''}${isSkipWeek?' skip-week':''}${isEditMode?' has-actions':''}`;
           // 修复：使用 escapeHtml 防止 XSS
           html += `
-            <div class="course-item ${isCurrent?'current':''}">
+            <div class="${courseClass}">
               <div class="course-time"><span class="period">${escapeHtml(formatPeriod(c.period))}</span><span class="time">${escapeHtml(getTimeText(c.period))}</span></div>
               <div class="course-info" data-type="${escapeAttr(c.type||'')}">
                 <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
@@ -257,6 +312,7 @@
                 ${c.startWeek||c.endWeek?`<div class="course-weeks">${escapeHtml(formatWeekRange(c))}</div>`:''}
                 ${isEditMode?`<div class="course-actions"><button data-action="edit" data-id="${escapeAttr(c.id)}">✏️</button><button data-action="delete" data-id="${escapeAttr(c.id)}">🗑️</button></div>`:''}
               </div>
+              ${isSkipWeek?'<div class="skip-week-stamp">本周<br>不上</div>':''}
             </div>`;
         });
       }
@@ -266,6 +322,7 @@
     function findNextCourse() {
       if (!schedule) return null;
       const now = new Date(), week = getCurrentWeek() + currentWeekOffset, dayOrder = ['monday','tuesday','wednesday','thursday','friday'];
+      const semesterStart = new Date(schedule.semesterStart);
       const courses = [];
       dayOrder.forEach((day, i) => {
         (schedule.courses[day] || []).forEach(c => {
@@ -274,22 +331,23 @@
           const setting = periodSettings[ps[0]-1];
           if (!setting) return;
           const [h, m] = setting.startTime.split(':');
-          const time = new Date(now);
-          // 修复：正确计算课程日期（周日 getDay()=0 视为 7）
-          const todayDay = time.getDay() === 0 ? 7 : time.getDay();
-          let dayDiff = (i + 1) - todayDay;
-          let weekOffset = 0;
-          if (dayDiff < 0) {
-            dayDiff += 7;
-            weekOffset = 1;
+          for (let courseWeek = Math.max(1, week); courseWeek <= totalWeeks; courseWeek++) {
+            if (!isActiveInWeek(c, courseWeek)) continue;
+            if (isSkippedInWeek(c, courseWeek)) continue;
+            const candidateTime = new Date(semesterStart.getTime() + (courseWeek - 1) * 604800000 + i * 86400000);
+            candidateTime.setHours(+h, +m, 0, 0);
+            if (candidateTime > now) {
+              courses.push({...c, dayName: dayNames[day], time: candidateTime});
+              break;
+            }
           }
-          if (!isActiveInWeek(c, week + weekOffset)) return;
-          time.setDate(time.getDate() + dayDiff);
-          time.setHours(+h, +m, 0, 0);
-          if (time > now) courses.push({...c, dayName: dayNames[day], time});
         });
       });
       return courses.sort((a,b) => a.time - b.time)[0] || null;
+    }
+
+    function isSameDate(a, b) {
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     }
 
     function formatRemaining(minutes) {
@@ -330,7 +388,7 @@
           
           let html = `<div class="next-course-title">⏰ 下一节课</div>`;
           html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
-          html += `<div class="next-course-info">${escapeHtml(next.dayName === current.dayName ? '今天' : next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
+          html += `<div class="next-course-info">${isSameDate(next.time, new Date()) ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
           html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
           // 小字显示当前课即将结束
           html += `<div class="next-course-secondary">${escapeHtml(current.name)} · 剩余${formatRemaining(current.remaining)}下课</div>`;
@@ -345,7 +403,7 @@
           if (next) {
             const diff = next.time - new Date();
             const diffMins = Math.floor(diff / 60000);
-            html += `<div class="next-course-secondary">下一节课：${escapeHtml(next.name)}（${escapeHtml(next.dayName === current.dayName ? '今天' : next.dayName)}，还有${formatRemaining(diffMins)}）</div>`;
+            html += `<div class="next-course-secondary">下一节课：${escapeHtml(next.name)}（${isSameDate(next.time, new Date()) ? '今天' : escapeHtml(next.dayName)}，还有${formatRemaining(diffMins)}）</div>`;
           }
           content.innerHTML = html;
         }
@@ -357,9 +415,7 @@
         el.classList.remove('in-class', 'no-class');
         const diff = next.time - new Date();
         const diffMins = Math.floor(diff / 60000);
-        const todayIndex = new Date().getDay() - 1;
-        const todayKey = ['monday','tuesday','wednesday','thursday','friday'][todayIndex];
-        const isToday = todayKey && next.dayName === dayNames[todayKey];
+        const isToday = isSameDate(next.time, new Date());
         
         let html = `<div class="next-course-title">⏰ 下一节课</div>`;
         html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
@@ -375,6 +431,21 @@
       document.querySelectorAll('.color-option').forEach(o => o.onclick = () => { document.querySelectorAll('.color-option').forEach(x => x.classList.remove('selected')); o.classList.add('selected'); });
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) makeupCb.addEventListener('change', toggleMakeupMode);
+      const skipCb = document.getElementById('courseSkipThisWeek');
+      if (skipCb) {
+        skipCb.addEventListener('change', () => {
+          if (skipCb.checked && makeupCb) {
+            makeupCb.checked = false;
+            toggleMakeupMode();
+          }
+        });
+      }
+      const totalPeriodsInput = document.getElementById('settingTotalPeriods');
+      if (totalPeriodsInput) {
+        const updatePeriodSettings = () => initPeriodSettings(+totalPeriodsInput.value);
+        totalPeriodsInput.addEventListener('input', updatePeriodSettings);
+        totalPeriodsInput.addEventListener('change', updatePeriodSettings);
+      }
       ['courseModal','settingsModal','passwordModal','annManageModal'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -516,7 +587,8 @@
       document.getElementById('settingSemesterStart').value = schedule.semesterStart || '';
       document.getElementById('settingTotalPeriods').value = totalPeriods;
       document.getElementById('settingTotalWeeks').value = totalWeeks;
-      initPeriodSettings();
+      settingsPeriodDraft = resizePeriodSettingsForCount(periodSettings, totalPeriods);
+      renderPeriodSettingsForm(settingsPeriodDraft, totalPeriods);
       document.getElementById('settingsModal').classList.add('active');
       // 隐藏下一节课卡片
       const nextCourse = document.getElementById('nextCourse');
@@ -525,6 +597,7 @@
 
     function closeSettingsModal() { 
       document.getElementById('settingsModal').classList.remove('active'); 
+      settingsPeriodDraft = null;
       // 恢复下一节课卡片显示
       const nextCourse = document.getElementById('nextCourse');
       if (nextCourse) nextCourse.style.display = 'block';
@@ -534,21 +607,19 @@
       const name = document.getElementById('settingClassName').value.trim();
       const description = document.getElementById('settingClassDesc').value.trim();
       const semesterStart = document.getElementById('settingSemesterStart').value;
-      const newTotalPeriods = +document.getElementById('settingTotalPeriods').value || 12;
+      const newTotalPeriods = Number(document.getElementById('settingTotalPeriods').value);
       const newTotalWeeks = +document.getElementById('settingTotalWeeks').value || 16;
-      const newPeriodSettings = [];
-      for (let i = 0; i < newTotalPeriods; i++) {
-        const timeInput = document.getElementById(`periodTime${i}`);
-        const durationInput = document.getElementById(`periodDuration${i}`);
-        if (timeInput && durationInput) {
-          newPeriodSettings.push({startTime: timeInput.value, duration: +durationInput.value || 45});
-        }
+      if (!Number.isInteger(newTotalPeriods) || newTotalPeriods < 1 || newTotalPeriods > 20) {
+        return showToast('总节数应在 1-20 范围内', 'error');
       }
+      syncSettingsDraftFromDom();
+      const newPeriodSettings = resizePeriodSettingsForCount(settingsPeriodDraft || periodSettings, newTotalPeriods);
       try {
         const res = await fetch('/api/schedule/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:sessionStorage.getItem('scheduleEditPwd')||'',name,description,semesterStart,totalPeriods:newTotalPeriods,totalWeeks:newTotalWeeks,periodSettings:newPeriodSettings})});
         const data = await res.json();
         if (data.success) {
           schedule.name = name; schedule.description = description; schedule.semesterStart = semesterStart;
+          schedule.totalPeriods = newTotalPeriods; schedule.totalWeeks = newTotalWeeks; schedule.periodSettings = newPeriodSettings;
           totalPeriods = newTotalPeriods; totalWeeks = newTotalWeeks; periodSettings = newPeriodSettings;
           initWeekOptions();
           document.getElementById('className').textContent = name;
@@ -578,6 +649,8 @@
       // 重置补课模式
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) { makeupCb.checked = false; toggleMakeupMode(); }
+      const skipCb = document.getElementById('courseSkipThisWeek');
+      if (skipCb) { skipCb.checked = false; skipCb.disabled = false; }
       document.getElementById('courseModal').classList.add('active');
       // 隐藏下一节课卡片，避免遮挡弹窗底部
       const nextCourse = document.getElementById('nextCourse');
@@ -610,6 +683,7 @@
       
       const type = document.querySelector('.color-option.selected')?.dataset.type || '';
       const isMakeup = document.getElementById('courseMakeup')?.checked || false;
+      const skipThisWeek = !isMakeup && (document.getElementById('courseSkipThisWeek')?.checked || false);
       const startWeek = +document.getElementById('courseStartWeek').value;
       const endWeek = +document.getElementById('courseEndWeek').value;
       if (startWeek > endWeek) {
@@ -626,6 +700,7 @@
         weekType: document.getElementById('courseWeekType').value,
         isMakeup
       };
+      if (skipThisWeek) course.skipWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek()));
       
       if (editingCourseId) {
         Object.keys(schedule.courses).forEach(d => {
@@ -640,6 +715,7 @@
         document.querySelectorAll('.day-tab').forEach(t => t.classList.toggle('active', t.dataset.day === day)); 
       }
       renderSchedule();
+      updateNextCourse();
       // 自动保存
       await autoSave();
     }
@@ -664,6 +740,8 @@
         : c.startWeek === c.endWeek && c.weekType === 'all';
       const makeupCb = document.getElementById('courseMakeup');
       if (makeupCb) { makeupCb.checked = isMakeup; toggleMakeupMode(); }
+      const skipCb = document.getElementById('courseSkipThisWeek');
+      if (skipCb) { skipCb.checked = !isMakeup && isSkippedInWeek(c, getCurrentWeek()); skipCb.disabled = !!isMakeup; }
       document.querySelectorAll('.color-option').forEach(o => o.classList.toggle('selected', o.dataset.type === (c.type || '')));
       document.getElementById('courseModal').classList.add('active');
     }
@@ -983,6 +1061,7 @@
       const startSel = document.getElementById('courseStartWeek');
       const endSel = document.getElementById('courseEndWeek');
       const weekType = document.getElementById('courseWeekType');
+      const skipCb = document.getElementById('courseSkipThisWeek');
       if (!checkbox || !hint) return;
       if (checkbox.checked) {
         const currentWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek() + currentWeekOffset));
@@ -994,11 +1073,13 @@
         startSel.disabled = true;
         endSel.disabled = true;
         weekType.disabled = true;
+        if (skipCb) { skipCb.checked = false; skipCb.disabled = true; }
       } else {
         hint.style.display = 'none';
         startSel.disabled = false;
         endSel.disabled = false;
         weekType.disabled = false;
+        if (skipCb) skipCb.disabled = false;
       }
     }
 

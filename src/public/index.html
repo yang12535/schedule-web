@@ -49,7 +49,7 @@
     .add-btn { width: 100%; padding: 16px; border: 2px dashed var(--gray-200); border-radius: 12px; background: white; color: var(--gray-600); cursor: pointer; margin-bottom: 12px; }
     .add-btn:hover { border-color: var(--primary); color: var(--primary); }
     
-    .course-item { display: flex; margin-bottom: 12px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .course-item { display: flex; margin-bottom: 12px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); position: relative; }
     .course-item.current { box-shadow: 0 0 0 2px var(--coral); }
     .course-time { width: 72px; padding: 16px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--gray-50); border-right: 1px solid var(--gray-200); }
     .course-time .period { font-size: 11px; color: var(--gray-400); }
@@ -134,6 +134,34 @@
     
     /* 补课标签 */
     .makeup-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
+    
+    /* 本周不上印章 */
+    .skip-week-stamp {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 52px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(220, 38, 38, 0.85);
+      color: white;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: center;
+      border-radius: 6px;
+      z-index: 10;
+      pointer-events: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      letter-spacing: 1px;
+    }
+    .course-item.skip-week .course-time,
+    .course-item.skip-week .course-info { opacity: 0.75; }
+    .course-item.skip-week .course-info { filter: grayscale(0.4); padding-right: 80px; }
+    .course-item.skip-week.has-actions .course-info { padding-right: 140px; }
+    .course-item.has-actions .skip-week-stamp { right: calc(12px + 32px + 6px + 32px + 8px); }
     
     /* 公告管理 */
     .ann-list-item { background: white; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #4A90D9; }
@@ -269,6 +297,10 @@
         <div id="makeupHint" style="font-size: 12px; color: var(--gray-400); margin-top: 4px; display: none;">
           周次将自动设为当前周（第<span id="makeupWeekNum">1</span>周），且仅在该周显示
         </div>
+        <div class="form-check" style="margin-top: 8px;">
+          <input type="checkbox" id="courseSkipThisWeek">
+          <label class="form-check-label" for="courseSkipThisWeek">本周不上（仅当前周生效）</label>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal()">取消</button>
@@ -304,7 +336,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">总节数</label>
-            <input type="number" class="form-input" id="settingTotalPeriods" value="12" min="1" max="20" onchange="initPeriodSettings()">
+            <input type="number" class="form-input" id="settingTotalPeriods" value="12" min="1" max="20">
           </div>
         </div>
         <div id="periodSettingsContainer"></div>
