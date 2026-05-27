@@ -65,20 +65,30 @@ function isValidCourses(courses) {
   return true;
 }
 
-function parsePeriodNumbers(period) {
-  if (!period || typeof period !== 'string') return [];
+function parsePositivePeriodNumber(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : 0;
+}
+
+function getMaxPeriodNumber(period) {
+  if (!period || typeof period !== 'string') return 0;
   const normalized = period.replace(/[第节]/g, '').trim();
   if (normalized.includes('-')) {
-    const parts = normalized.split('-').map(Number);
-    if (parts.length === 2 && Number.isInteger(parts[0]) && Number.isInteger(parts[1]) && parts[0] > 0 && parts[0] <= parts[1]) {
-      return Array.from({ length: parts[1] - parts[0] + 1 }, (_, i) => parts[0] + i);
+    const parts = normalized.split('-').map(part => part.trim());
+    if (parts.length === 2) {
+      const start = parsePositivePeriodNumber(parts[0]);
+      const end = parsePositivePeriodNumber(parts[1]);
+      if (start > 0 && end > 0 && start <= end) return end;
     }
+    return 0;
   }
   if (normalized.includes(',')) {
-    return normalized.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
+    return normalized.split(',').reduce((max, part) => {
+      const number = parsePositivePeriodNumber(part.trim());
+      return number > max ? number : max;
+    }, 0);
   }
-  const single = Number(normalized);
-  return Number.isInteger(single) && single > 0 ? [single] : [];
+  return parsePositivePeriodNumber(normalized);
 }
 
 function getMaxCoursePeriod(courses) {
@@ -87,9 +97,8 @@ function getMaxCoursePeriod(courses) {
   for (const list of Object.values(courses)) {
     if (!Array.isArray(list)) continue;
     for (const course of list) {
-      for (const period of parsePeriodNumbers(course && course.period)) {
-        if (period > max) max = period;
-      }
+      const period = getMaxPeriodNumber(course && course.period);
+      if (period > max) max = period;
     }
   }
   return max;
@@ -283,7 +292,9 @@ function withSaveLock(fn) {
     return await fn();
   });
   saveLock = next.catch(err => {
-    console.error('Save failed:', err);
+    if (!(err instanceof HttpError)) {
+      console.error('Save failed:', err);
+    }
   });
   return next;
 }

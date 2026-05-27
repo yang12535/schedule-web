@@ -344,6 +344,38 @@ describe('Schedule API', () => {
       expect(res.body.periodSettings[14].startTime).toBe('00:30');
       expect(res.body.periodSettings.every(p => /^([01]\d|2[0-3]):([0-5]\d)$/.test(p.startTime))).toBe(true);
     });
+
+    it('导入超大节次范围时应返回 400 而不是展开范围', async () => {
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '超大节次旧课表',
+          totalPeriods: 12,
+          courses: {
+            monday: [{
+              id: 'legacy-huge-range',
+              name: '异常范围课程',
+              period: '1-999999999999999999',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 20,
+              weekType: 'all'
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          }
+        }
+      };
+
+      const res = await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid totalPeriods');
+    });
   });
 
   describe('GET /api/announcements', () => {
