@@ -79,6 +79,13 @@
       `).join('');
     }
 
+    function createSelectOption(label, value) {
+      const option = document.createElement('option');
+      option.textContent = label;
+      option.value = String(value);
+      return option;
+    }
+
     async function init() {
       try {
         await loadSchedule();
@@ -128,8 +135,8 @@
       if (!start || !end) return;
       start.innerHTML = end.innerHTML = '';
       for (let i = 1; i <= totalWeeks; i++) {
-        start.add(new Option(`第${i}周起`, i));
-        end.add(new Option(`到第${i}周`, i));
+        start.appendChild(createSelectOption(`第${i}周起`, i));
+        end.appendChild(createSelectOption(`到第${i}周`, i));
       }
       start.value = 1; end.value = totalWeeks;
     }
