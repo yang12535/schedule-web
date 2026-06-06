@@ -20,7 +20,7 @@ process.env.CLASS_DESC = 'Test Description';
 process.env.SEMESTER_START = '2024-03-01';
 
 const request = require('supertest');
-const { app, init } = require('../src/server/server');
+const { app, init, resolveEditPassword } = require('../src/server/server');
 
 describe('Schedule API', () => {
   beforeAll(async () => {
@@ -388,7 +388,35 @@ describe('Schedule API', () => {
   describe('GET /healthz', () => {
     it('应返回健康状态，不写日志', async () => {
       const res = await request(app).get('/healthz').expect(200);
-      expect(res.body.status).toBe('ok');
+      expect(res.body).toEqual({ ok: true, service: 'schedule-web' });
+    });
+  });
+
+  describe('EDIT_PASSWORD 配置', () => {
+    it('未设置时应生成随机密码', () => {
+      const result = resolveEditPassword({});
+      expect(result.generated).toBe(true);
+      expect(result.value).toMatch(/^\d{6}$/);
+    });
+
+    it('设置具体值时应使用固定密码', () => {
+      expect(resolveEditPassword({ EDIT_PASSWORD: 'abc123' })).toEqual({
+        value: 'abc123',
+        generated: false
+      });
+    });
+
+    it('显式空字符串应关闭密码保护', () => {
+      expect(resolveEditPassword({ EDIT_PASSWORD: '' })).toEqual({
+        value: '',
+        generated: false
+      });
+    });
+
+    it('Compose 自动生成标记应按未设置处理', () => {
+      const result = resolveEditPassword({ EDIT_PASSWORD: '__AUTO_GENERATE__' });
+      expect(result.generated).toBe(true);
+      expect(result.value).toMatch(/^\d{6}$/);
     });
   });
 });

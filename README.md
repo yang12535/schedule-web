@@ -18,9 +18,20 @@
 
 ## 🚀 快速部署
 
+### 雨云 RCA 一键部署
+
+面向普通用户的一键部署入口将在应用审核通过后补充：
+
+- 应用商店：`https://app.rainyun.com/apps/rca/store/<APP_ID>`
+- 推广链接：`https://app.rainyun.com/apps/rca/store/<APP_ID>?ref=<UID>`
+
+部署页面会随机生成编辑密码。部署完成后，打开“Web 管理页面”的公网地址即可使用；课表和日志都保存在 `/data`，备份时只需备份该目录。
+
+详细配置、密码说明和备份步骤见 [雨云 RCA 部署指南](docs/rainyun-rca.md)。
+
 ### 方式一：预编译镜像快速部署（推荐 ⭐）
 
-使用 GitHub Container Registry 预编译镜像，无需构建，秒级启动：
+使用 GitHub Container Registry 固定版本镜像，无需构建，秒级启动：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yang12535/schedule-web/main/deploy/install-prebuilt.sh | bash
@@ -34,7 +45,7 @@ make deploy-fast
 
 **特点**：
 - ⚡ 秒级启动，无需等待构建
-- 🔄 自动拉取最新镜像
+- 🔄 固定使用已验证的 `v1.1.0` 镜像
 - 🏗️ 支持 amd64/arm64 双架构
 
 ### 方式二：VPS 一键部署（完整构建）
@@ -92,8 +103,9 @@ make dev
 |--------|------|--------|
 | `CLASS_NAME` | 班级名称 | 我的课表 |
 | `CLASS_DESC` | 学期描述 | - |
-| `SEMESTER_START` | 学期开始日期 | 2024-03-01 |
-| `EDIT_PASSWORD` | 编辑密码（留空则无需密码） | - |
+| `SEMESTER_START` | 学期开始日期 | 当年 03-01 |
+| `EDIT_PASSWORD` | 编辑密码；未设置时随机生成 | 自动生成 |
+| `PRINT_EDIT_PASSWORD` | 是否在启动日志中显示自动生成的密码 | 服务默认 false，Compose 默认 true |
 | `HOST_PORT` | 服务端口 | 30080 |
 
 ## 🔧 管理命令
@@ -141,7 +153,6 @@ schedule-web/
 ├── .github/workflows/           # GitHub Actions
 │   └── docker.yml               # 自动构建 Docker 镜像
 ├── data/                        # 数据存储 (Docker 挂载)
-├── logs/                        # 日志文件 (Docker 挂载)
 ├── docker-compose.yml           # Docker Compose 配置（预编译镜像）⭐
 ├── docker-compose.build.yml     # Docker Compose 配置（本地构建）
 ├── Dockerfile                   # Docker 镜像构建
@@ -163,8 +174,9 @@ schedule-web/
 
 - 默认启用密码保护，首次启动会生成随机 6 位数字密码
 - 可通过 `EDIT_PASSWORD` 环境变量自定义密码
-- 留空 `EDIT_PASSWORD` 可关闭密码保护（不推荐用于生产环境）
-- 所有数据存储在本地 `data/` 目录
+- 只有显式传入空字符串才会关闭密码保护，公网部署禁止这样配置
+- Docker Compose 未设置该变量时不会把它误传为空密码
+- 所有持久化数据均存储在 `/data`，本地 Compose 对应 `data/` 目录
 - **v1.0.2 安全加固**：添加 XSS 防护、路径遍历防护、输入验证
 
 ## ❓ 常见问题
@@ -218,12 +230,22 @@ environment:
 ```
 `EDIT_PASSWORD` 的行为分为三种情况：
 - **未设置 / 未传入容器环境变量**：每次容器重启都会随机生成一个 6 位数字密码。
-- **设置为空字符串**：关闭密码保护。
+- **设置为空字符串**：关闭密码保护，仅限隔离的本地调试，禁止公网使用。
 - **设置为具体值**：使用该值作为固定编辑密码。
 
 ---
 
 ## 📝 更新日志
+
+### v1.1.0 (2026-06-06) - 雨云 RCA 上架适配
+- ✅ 标准化 `/healthz` 健康检查
+- ✅ 修复 Compose 默认空密码问题
+- ✅ 固定发布镜像版本并统一 `/data` 持久化
+- ✅ 新增雨云 RCA 部署指南与模板参考
+
+### v1.0.5 (2026-04-28) - 安全修复与兼容性增强版
+- ✅ 密码输入与会话存储安全增强
+- ✅ 公告编辑、删除和加载兼容性修复
 
 ### v1.0.4 (2026-04-17) - 公告与补课功能版
 - ✅ 新增弹窗公告（时段内生效）

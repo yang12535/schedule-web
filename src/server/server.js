@@ -13,6 +13,16 @@ function generatePassword() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
+const AUTO_GENERATE_PASSWORD_VALUE = '__AUTO_GENERATE__';
+
+function resolveEditPassword(env = process.env) {
+  const isSet = Object.prototype.hasOwnProperty.call(env, 'EDIT_PASSWORD');
+  if (!isSet || env.EDIT_PASSWORD === AUTO_GENERATE_PASSWORD_VALUE) {
+    return { value: generatePassword(), generated: true };
+  }
+  return { value: env.EDIT_PASSWORD, generated: false };
+}
+
 class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -203,7 +213,8 @@ async function logToFile(message) {
 // Config
 const CLASS_NAME = process.env.CLASS_NAME || '我的课表';
 const CLASS_DESC = process.env.CLASS_DESC || '';
-const EDIT_PASSWORD = process.env.EDIT_PASSWORD ? process.env.EDIT_PASSWORD : generatePassword();
+const EDIT_PASSWORD_CONFIG = resolveEditPassword();
+const EDIT_PASSWORD = EDIT_PASSWORD_CONFIG.value;
 const SEMESTER_START = process.env.SEMESTER_START || `${new Date().getFullYear()}-03-01`;
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 
@@ -256,7 +267,7 @@ app.use(express.json({ limit: '1mb' }));
 
 // 轻量健康检查端点（不写日志、不限流，供 Docker/K8s 使用）
 app.get('/healthz', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.status(200).json({ ok: true, service: 'schedule-web' });
 });
 
 // 静态文件路径 - 支持两种部署方式
@@ -796,7 +807,7 @@ async function init() {
 }
 
 // 导出供测试使用
-module.exports = { app, init };
+module.exports = { app, init, resolveEditPassword };
 
 if (require.main === module) {
   init().then(() => {
@@ -815,7 +826,7 @@ ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密
 ========================================
       `;
       console.log(banner);
-      if (!process.env.EDIT_PASSWORD && EDIT_PASSWORD) {
+      if (EDIT_PASSWORD_CONFIG.generated) {
         if (process.env.PRINT_EDIT_PASSWORD === 'true') {
           console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
         } else {

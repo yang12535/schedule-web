@@ -98,17 +98,16 @@ SEMESTER_START=2024-03-01
 EDIT_PASSWORD=${RANDOM_PASS}
 HOST_PORT=30080
 DATA_PATH=./data
-LOGS_PATH=./logs
 EOF
         echo "$RANDOM_PASS" > .password
         chmod 600 .password
     fi
     
     set -a; source .env; set +a
-    mkdir -p data logs
+    mkdir -p data
     # 修复：设置数据目录权限（与容器内 node 用户 UID=1000 对齐）
-    chmod 755 data logs
-    chown -R 1000:1000 data logs
+    chmod 755 data
+    chown -R 1000:1000 data
     
     info "停止旧服务..."
     docker-compose down 2>/dev/null || true

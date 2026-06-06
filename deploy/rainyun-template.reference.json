@@ -1,0 +1,144 @@
+{
+  "_notice": "This file is a human-readable reference for filling the RainYun RCA UI. It is not an official import format.",
+  "app": {
+    "name": "schedule-web",
+    "title": "班级课表服务",
+    "description": "无需数据库的轻量级班级课表 Web 服务，支持在线编辑、单双周、公告、导入导出和移动端访问。",
+    "category": "website",
+    "license": "AGPL-3.0",
+    "website": "https://github.com/yang12535/schedule-web",
+    "source": "https://github.com/yang12535/schedule-web"
+  },
+  "version": {
+    "version": "1.1.0",
+    "image": "ghcr.io/yang12535/schedule-web:v1.1.0",
+    "resources": {
+      "minCpu": 0.25,
+      "minMemoryMb": 256
+    },
+    "command": null,
+    "args": null
+  },
+  "env": [
+    {
+      "key": "NODE_ENV",
+      "value": "production"
+    },
+    {
+      "key": "PORT",
+      "value": "3000"
+    },
+    {
+      "key": "DATA_FILE",
+      "value": "/data/schedule.json"
+    },
+    {
+      "key": "LOG_DIR",
+      "value": "/data/logs"
+    },
+    {
+      "key": "TZ",
+      "value": "Asia/Shanghai"
+    },
+    {
+      "key": "CLASS_NAME",
+      "value": "${CLASS_NAME}"
+    },
+    {
+      "key": "CLASS_DESC",
+      "value": "${CLASS_DESC}"
+    },
+    {
+      "key": "SEMESTER_START",
+      "value": "${SEMESTER_START}"
+    },
+    {
+      "key": "EDIT_PASSWORD",
+      "value": "${EDIT_PASSWORD}"
+    }
+  ],
+  "volumeMounts": [
+    {
+      "name": "data",
+      "mountPath": "/data",
+      "subPath": "schedule-web/data",
+      "contentType": "directory"
+    }
+  ],
+  "services": [
+    {
+      "name": "web",
+      "displayName": "Web 管理页面",
+      "type": "external",
+      "internalPort": 3000,
+      "externalPort": null,
+      "protocol": "tcp"
+    }
+  ],
+  "options": [
+    {
+      "label": "班级名称",
+      "envKey": "CLASS_NAME",
+      "type": "text",
+      "default": "我的课表",
+      "required": true,
+      "disabled": false,
+      "random": false,
+      "validation": {
+        "minLength": 1,
+        "maxLength": 50
+      }
+    },
+    {
+      "label": "学期描述",
+      "envKey": "CLASS_DESC",
+      "type": "text",
+      "default": "当前学期",
+      "required": false,
+      "disabled": false,
+      "random": false,
+      "validation": {
+        "maxLength": 100
+      }
+    },
+    {
+      "label": "学期开始日期",
+      "envKey": "SEMESTER_START",
+      "type": "text",
+      "default": "2026-03-01",
+      "required": true,
+      "disabled": false,
+      "random": false,
+      "validation": {
+        "regex": "^\\d{4}-\\d{2}-\\d{2}$",
+        "message": "格式必须为 YYYY-MM-DD，例如 2026-03-01"
+      }
+    },
+    {
+      "label": "编辑密码",
+      "envKey": "EDIT_PASSWORD",
+      "type": "password",
+      "default": "schedule",
+      "required": true,
+      "disabled": false,
+      "random": true,
+      "validation": {
+        "minLength": 8,
+        "maxLength": 64
+      }
+    }
+  ],
+  "healthcheck": {
+    "path": "/healthz",
+    "expectedStatus": 200
+  },
+  "storeCopy": {
+    "shortDescription": "无需数据库的轻量级班级课表 Web 服务。",
+    "deploymentNotes": [
+      "部署后打开 Web 管理页面服务的公网地址。",
+      "编辑密码由部署页面随机生成，请保存到密码管理器。",
+      "课表数据保存在 /data/schedule.json。",
+      "备份时只需要备份 /data 目录。"
+    ]
+  }
+}
