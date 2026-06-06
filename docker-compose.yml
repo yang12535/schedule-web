@@ -9,7 +9,7 @@
 services:
   schedule:
     # 预编译镜像 (GitHub Container Registry)
-    image: ghcr.io/yang12535/schedule-web:v1.1.0
+    image: ghcr.io/yang12535/schedule-web:1.1.0
     # 如需本地构建，请使用 docker-compose.build.yml 或注释掉上面一行
     container_name: class-schedule
     ports:
