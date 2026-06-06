@@ -265,9 +265,34 @@ let scheduleCache = null;
 
 app.use(express.json({ limit: '1mb' }));
 
-// 轻量健康检查端点（不写日志、不限流，供 Docker/K8s 使用）
-app.get('/healthz', (req, res) => {
-  res.status(200).json({ ok: true, service: 'schedule-web' });
+async function checkStorageWritable(dataFile = DATA_FILE) {
+  const dataDir = path.dirname(dataFile);
+  const suffix = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+  const probeFile = path.join(dataDir, `.healthz.${suffix}`);
+  const renamedProbeFile = `${probeFile}.renamed`;
+
+  try {
+    await fs.writeFile(probeFile, 'ok');
+    await fs.rename(probeFile, renamedProbeFile);
+  } finally {
+    await fs.unlink(probeFile).catch(err => {
+      if (err.code !== 'ENOENT') throw err;
+    });
+    await fs.unlink(renamedProbeFile).catch(err => {
+      if (err.code !== 'ENOENT') throw err;
+    });
+  }
+}
+
+// 健康检查同时验证持久化目录可写及原子重命名可用。
+app.get('/healthz', async (req, res) => {
+  try {
+    await checkStorageWritable();
+    res.status(200).json({ ok: true, service: 'schedule-web' });
+  } catch (err) {
+    console.error('存储健康检查失败:', err.message);
+    res.status(503).json({ ok: false, service: 'schedule-web', storage: 'unavailable' });
+  }
 });
 
 // 静态文件路径 - 支持两种部署方式
@@ -789,25 +814,21 @@ app.use((err, req, res, next) => {
 });
 
 async function init() {
+  await fs.mkdir(path.dirname(DATA_FILE), {recursive:true});
+  await fs.mkdir(LOG_DIR, {recursive:true});
+  await checkStorageWritable();
   try {
-    await fs.mkdir(path.dirname(DATA_FILE), {recursive:true});
-    await fs.mkdir(LOG_DIR, {recursive:true});
-    try { 
-      await fs.access(DATA_FILE); 
-    } catch { 
-      console.log('初始化数据文件...');
-      await saveSchedule(createDefaultSchedule()); 
-    }
-    // 启动时加载数据到缓存
-    await loadSchedule();
-  } catch (err) { 
-    console.error('Init error:', err);
-    // 不抛出错误，让服务继续启动
+    await fs.access(DATA_FILE);
+  } catch {
+    console.log('初始化数据文件...');
+    await saveSchedule(createDefaultSchedule());
   }
+  // 启动时加载数据到缓存
+  await loadSchedule();
 }
 
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable };
 
 if (require.main === module) {
   init().then(() => {

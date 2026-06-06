@@ -20,7 +20,7 @@ process.env.CLASS_DESC = 'Test Description';
 process.env.SEMESTER_START = '2024-03-01';
 
 const request = require('supertest');
-const { app, init, resolveEditPassword } = require('../src/server/server');
+const { app, init, resolveEditPassword, checkStorageWritable } = require('../src/server/server');
 
 describe('Schedule API', () => {
   beforeAll(async () => {
@@ -386,9 +386,20 @@ describe('Schedule API', () => {
   });
 
   describe('GET /healthz', () => {
-    it('应返回健康状态，不写日志', async () => {
+    it('持久化目录可写时应返回健康状态', async () => {
       const res = await request(app).get('/healthz').expect(200);
       expect(res.body).toEqual({ ok: true, service: 'schedule-web' });
+    });
+
+    it('应实际验证写入和原子重命名', async () => {
+      await expect(checkStorageWritable(process.env.DATA_FILE)).resolves.toBeUndefined();
+      const files = await fs.readdir(tmpDir);
+      expect(files.some(file => file.startsWith('.healthz.'))).toBe(false);
+    });
+
+    it('持久化目录不存在时应报告不可写', async () => {
+      const missingDataFile = path.join(tmpDir, 'missing', 'schedule.json');
+      await expect(checkStorageWritable(missingDataFile)).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });
 
