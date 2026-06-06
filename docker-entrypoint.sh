@@ -1,12 +1,14 @@
 #!/bin/sh
 # ========================================
 # 班级课表服务 - Docker 入口脚本
-# 修复 /data 目录权限（挂载卷可能覆盖构建时的权限设置）
+# 以 root 修复 /data 目录权限（挂载卷会覆盖构建时的权限设置）
+# 然后降级到 node 用户运行应用（安全最佳实践）
 # ========================================
 
-# 确保数据目录存在且有写入权限
+# 确保数据目录存在且对 node 用户可写
 mkdir -p /data/logs
-chmod -R 777 /data
+chown -R node:node /data
+chmod -R u+rwx /data
 
-# 启动应用
-exec node server.js
+# 降级到 node 用户运行应用
+exec su-exec node node server.js

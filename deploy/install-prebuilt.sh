@@ -122,7 +122,6 @@ HOST_PORT=30080
 
 # 数据存储路径
 DATA_PATH=./data
-LOGS_PATH=./logs
 EOF
         echo "$RANDOM_PASS" > .password
         chmod 600 .password
@@ -133,9 +132,10 @@ EOF
     
     # 创建数据目录
     set -a; source .env; set +a
-    mkdir -p data logs
-    # 修复：设置数据目录权限
-    chmod 755 data logs
+    mkdir -p data
+    # 修复：设置数据目录权限（与容器内 node 用户 UID=1000 对齐）
+    chmod 755 data
+    chown -R 1000:1000 data
     
     # 停止旧服务
     info "停止旧服务..."

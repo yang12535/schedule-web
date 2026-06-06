@@ -13,6 +13,16 @@ function generatePassword() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
+const AUTO_GENERATE_PASSWORD_VALUE = '__AUTO_GENERATE__';
+
+function resolveEditPassword(env = process.env) {
+  const isSet = Object.prototype.hasOwnProperty.call(env, 'EDIT_PASSWORD');
+  if (!isSet || env.EDIT_PASSWORD === AUTO_GENERATE_PASSWORD_VALUE) {
+    return { value: generatePassword(), generated: true };
+  }
+  return { value: env.EDIT_PASSWORD, generated: false };
+}
+
 class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -49,6 +59,7 @@ function isValidCourse(course) {
   if (course.teacher !== undefined && course.teacher !== null && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
   if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
   if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
+  if (course.skipWeek !== undefined && course.skipWeek !== null && (!Number.isInteger(course.skipWeek) || course.skipWeek < 1 || course.skipWeek > 30)) return false;
   return true;
 }
 
@@ -64,6 +75,45 @@ function isValidCourses(courses) {
   return true;
 }
 
+function parsePositivePeriodNumber(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : 0;
+}
+
+function getMaxPeriodNumber(period) {
+  if (!period || typeof period !== 'string') return 0;
+  const normalized = period.replace(/[第节]/g, '').trim();
+  if (normalized.includes('-')) {
+    const parts = normalized.split('-').map(part => part.trim());
+    if (parts.length === 2) {
+      const start = parsePositivePeriodNumber(parts[0]);
+      const end = parsePositivePeriodNumber(parts[1]);
+      if (start > 0 && end > 0 && start <= end) return end;
+    }
+    return 0;
+  }
+  if (normalized.includes(',')) {
+    return normalized.split(',').reduce((max, part) => {
+      const number = parsePositivePeriodNumber(part.trim());
+      return number > max ? number : max;
+    }, 0);
+  }
+  return parsePositivePeriodNumber(normalized);
+}
+
+function getMaxCoursePeriod(courses) {
+  if (!courses || typeof courses !== 'object') return 0;
+  let max = 0;
+  for (const list of Object.values(courses)) {
+    if (!Array.isArray(list)) continue;
+    for (const course of list) {
+      const period = getMaxPeriodNumber(course && course.period);
+      if (period > max) max = period;
+    }
+  }
+  return max;
+}
+
 function isValidAnnouncement(a) {
   if (!a || typeof a !== 'object') return false;
   if (typeof a.title !== 'string' || !a.title.trim() || a.title.length > 100) return false;
@@ -76,17 +126,25 @@ function isValidAnnouncement(a) {
 // 内存级速率限制
 const rateLimitStore = new Map();
 
-// TTL 清理：每5分钟清理过期的限流记录
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitStore) {
-    if (now > entry.expiresAt) {
-      rateLimitStore.delete(key);
+// TTL 清理：每5分钟清理过期的限流记录（测试环境禁用，避免 Jest open handles）
+let rateLimitCleanupInterval = null;
+if (process.env.NODE_ENV !== 'test') {
+  rateLimitCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of rateLimitStore) {
+      if (now > entry.expiresAt) {
+        rateLimitStore.delete(key);
+      }
     }
-  }
-}, 5 * 60 * 1000);
+  }, 5 * 60 * 1000);
+  rateLimitCleanupInterval.unref();
+}
 
 function createRateLimiter(maxRequests, windowMs, keyFn) {
+  // 测试环境跳过限流，避免测试被误拦截
+  if (process.env.NODE_ENV === 'test') {
+    return (req, res, next) => next();
+  }
   return (req, res, next) => {
     const key = keyFn(req);
     const now = Date.now();
@@ -155,7 +213,8 @@ async function logToFile(message) {
 // Config
 const CLASS_NAME = process.env.CLASS_NAME || '我的课表';
 const CLASS_DESC = process.env.CLASS_DESC || '';
-const EDIT_PASSWORD = process.env.EDIT_PASSWORD ? process.env.EDIT_PASSWORD : generatePassword();
+const EDIT_PASSWORD_CONFIG = resolveEditPassword();
+const EDIT_PASSWORD = EDIT_PASSWORD_CONFIG.value;
 const SEMESTER_START = process.env.SEMESTER_START || `${new Date().getFullYear()}-03-01`;
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 
@@ -164,6 +223,31 @@ const defaultPeriods = [
   {startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},
   {startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}
 ];
+
+function formatClockTime(minutes) {
+  const minutesInDay = 24 * 60;
+  const normalized = ((minutes % minutesInDay) + minutesInDay) % minutesInDay;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+
+function resizePeriodSettings(settings, count) {
+  const resized = Array.isArray(settings) ? settings.slice(0, count).map(p => ({ ...p })) : [];
+  while (resized.length < count) {
+    const preset = defaultPeriods[resized.length];
+    if (preset) {
+      resized.push({ ...preset });
+      continue;
+    }
+    const last = resized[resized.length - 1] || defaultPeriods[defaultPeriods.length - 1];
+    const [h, m] = last.startTime.split(':');
+    const nextStart = Number(h) * 60 + Number(m) + last.duration + 10;
+    resized.push({
+      startTime: formatClockTime(nextStart),
+      duration: last.duration
+    });
+  }
+  return resized;
+}
 
 const defaultSchedule = {
   name: CLASS_NAME, description: CLASS_DESC, semesterStart: SEMESTER_START,
@@ -180,6 +264,11 @@ function createDefaultSchedule() {
 let scheduleCache = null;
 
 app.use(express.json({ limit: '1mb' }));
+
+// 轻量健康检查端点（不写日志、不限流，供 Docker/K8s 使用）
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true, service: 'schedule-web' });
+});
 
 // 静态文件路径 - 支持两种部署方式
 const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
@@ -213,7 +302,11 @@ function withSaveLock(fn) {
   const next = saveLock.then(async () => {
     return await fn();
   });
-  saveLock = next.catch(() => {});
+  saveLock = next.catch(err => {
+    if (!(err instanceof HttpError)) {
+      console.error('Save failed:', err);
+    }
+  });
   return next;
 }
 
@@ -334,6 +427,9 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       if (semesterStart && isValidDateString(semesterStart)) newSchedule.semesterStart = semesterStart;
       if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) newSchedule.totalPeriods = totalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) newSchedule.totalWeeks = totalWeeks;
+      if (totalPeriods !== undefined && !periodSettings) {
+        newSchedule.periodSettings = newSchedule.periodSettings.slice(0, newSchedule.totalPeriods);
+      }
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');
       }
@@ -493,7 +589,12 @@ app.get('/api/export', async (req, res) => {
     const schedule = await loadSchedule();
     await logToFile(`数据导出`);
     res.setHeader('Content-Type','application/json');
-    res.setHeader('Content-Disposition',`attachment; filename="${encodeURIComponent(schedule.name)}_课表.json"`);
+    const filename = `${schedule.name}_课表.json`;
+    // RFC 5987: encodeURIComponent 不编码 *!'()，这些字符在 attr-char 中不安全，需额外转义
+    const encoded = encodeURIComponent(filename)
+      .replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+    const asciiFallback = 'schedule_export.json';
+    res.setHeader('Content-Disposition',`attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`);
     res.json({...schedule, exportDate:new Date().toISOString()});
   } catch (err) {
     console.error('导出失败:', err);
@@ -563,24 +664,33 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
-      const newTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : newSchedule.totalPeriods;
-      if (migratedData.periodSettings) {
+      if (!isValidCourses(migratedData.courses)) {
+        throw new HttpError(400, 'Invalid courses structure');
+      }
+      const importedTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : 0;
+      const hasPeriodSettings = migratedData.periodSettings !== undefined && migratedData.periodSettings !== null;
+      const periodSettingsLength = hasPeriodSettings && Array.isArray(migratedData.periodSettings) ? migratedData.periodSettings.length : 0;
+      const maxCoursePeriod = getMaxCoursePeriod(migratedData.courses);
+      const newTotalPeriods = Math.max(importedTotalPeriods || newSchedule.totalPeriods, periodSettingsLength, maxCoursePeriod);
+      if (!Number.isInteger(newTotalPeriods) || newTotalPeriods < 1 || newTotalPeriods > 20) {
+        throw new HttpError(400, 'Invalid totalPeriods');
+      }
+      if (hasPeriodSettings) {
         if (!isValidPeriodSettings(migratedData.periodSettings)) {
           throw new HttpError(400, 'Invalid periodSettings');
         }
-        if (migratedData.periodSettings.length !== newTotalPeriods) {
-          throw new HttpError(400, 'periodSettings length does not match totalPeriods');
-        }
-        newSchedule.periodSettings = migratedData.periodSettings;
+        newSchedule.periodSettings = resizePeriodSettings(migratedData.periodSettings, newTotalPeriods);
+      } else {
+        newSchedule.periodSettings = resizePeriodSettings(newSchedule.periodSettings, newTotalPeriods);
       }
-      if (!isValidCourses(migratedData.courses)) {
-        throw new HttpError(400, 'Invalid courses structure');
+      if (!isValidPeriodSettings(newSchedule.periodSettings)) {
+        throw new HttpError(400, 'Invalid periodSettings');
       }
       newSchedule.courses = migratedData.courses;
       if (migratedData.semesterStart && isValidDateString(migratedData.semesterStart)) newSchedule.semesterStart = migratedData.semesterStart;
       if (migratedData.name) newSchedule.name = String(migratedData.name).slice(0, 100);
       if (migratedData.description !== undefined) newSchedule.description = String(migratedData.description).slice(0, 200);
-      if (Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20) newSchedule.totalPeriods = migratedData.totalPeriods;
+      newSchedule.totalPeriods = newTotalPeriods;
       if (Number.isInteger(migratedData.totalWeeks) && migratedData.totalWeeks >= 1 && migratedData.totalWeeks <= 30) newSchedule.totalWeeks = migratedData.totalWeeks;
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');
@@ -696,9 +806,13 @@ async function init() {
   }
 }
 
-init().then(() => {
-  app.listen(PORT, () => {
-    const banner = `
+// 导出供测试使用
+module.exports = { app, init, resolveEditPassword };
+
+if (require.main === module) {
+  init().then(() => {
+    app.listen(PORT, () => {
+      const banner = `
 ========================================
 📚 班级课表服务已启动
 ========================================
@@ -710,30 +824,33 @@ init().then(() => {
 ----------------------------------------
 ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密码'}
 ========================================
-    `;
-    console.log(banner);
-    if (!process.env.EDIT_PASSWORD && EDIT_PASSWORD) {
-      if (process.env.PRINT_EDIT_PASSWORD === 'true') {
-        console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
-      } else {
-        console.log('🔑 编辑密码已自动生成（设置 PRINT_EDIT_PASSWORD=true 可在日志中查看）');
+      `;
+      console.log(banner);
+      if (EDIT_PASSWORD_CONFIG.generated) {
+        if (process.env.PRINT_EDIT_PASSWORD === 'true') {
+          console.log(`🔑 自动生成的编辑密码: ${EDIT_PASSWORD}`);
+        } else {
+          console.log('🔑 编辑密码已自动生成（设置 PRINT_EDIT_PASSWORD=true 可在日志中查看）');
+        }
       }
-    }
-    logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
+      logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
+    });
+  }).catch(err => {
+    console.error('服务启动失败:', err);
+    process.exit(1);
   });
-}).catch(err => {
-  console.error('服务启动失败:', err);
-  process.exit(1);
-});
 
-process.on('SIGTERM', async () => {
-  console.log('收到 SIGTERM，等待日志写入完成...');
-  await Promise.all(pendingLogs);
-  process.exit(0);
-});
+  process.on('SIGTERM', async () => {
+    console.log('收到 SIGTERM，等待日志写入完成...');
+    if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval);
+    await Promise.all(pendingLogs);
+    process.exit(0);
+  });
 
-process.on('SIGINT', async () => {
-  console.log('收到 SIGINT，等待日志写入完成...');
-  await Promise.all(pendingLogs);
-  process.exit(0);
-});
+  process.on('SIGINT', async () => {
+    console.log('收到 SIGINT，等待日志写入完成...');
+    if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval);
+    await Promise.all(pendingLogs);
+    process.exit(0);
+  });
+}

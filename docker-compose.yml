@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ========================================
 # 班级课表服务 - Docker Compose 配置
 # ========================================
@@ -11,26 +9,31 @@ version: '3.8'
 services:
   schedule:
     # 预编译镜像 (GitHub Container Registry)
-    image: ghcr.io/yang12535/schedule-web:latest
+    image: ghcr.io/yang12535/schedule-web:1.1.0
     # 如需本地构建，请使用 docker-compose.build.yml 或注释掉上面一行
     container_name: class-schedule
     ports:
       - "${HOST_PORT:-30080}:3000"
     volumes:
-      - ./data:/data
-      - ./logs:/data/logs
+      - "${DATA_PATH:-./data}:/data"
     environment:
       - NODE_ENV=production
       - CLASS_NAME=${CLASS_NAME:-计算机1班}
-      - CLASS_DESC=${CLASS_DESC:-2024年春季学期}
-      - EDIT_PASSWORD=${EDIT_PASSWORD:-}
-      - SEMESTER_START=${SEMESTER_START:-2024-03-01}
+      - CLASS_DESC=${CLASS_DESC:-当前学期}
+      # "-" 仅在变量未设置时使用保留标记；显式空字符串仍表示关闭密码保护。
+      - EDIT_PASSWORD=${EDIT_PASSWORD-__AUTO_GENERATE__}
+      - PRINT_EDIT_PASSWORD=${PRINT_EDIT_PASSWORD:-true}
+      - SEMESTER_START=${SEMESTER_START:-2026-03-01}
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
       - PUBLIC_PATH=/app/public
+    # 与 Dockerfile 中 USER node 保持一致（node 镜像 UID=1000）
+    # 注意：宿主机数据目录需对 UID 1000 可写，
+    # 首次部署请运行 deploy/install.sh 或手动执行：mkdir -p data && chown -R 1000:1000 data
+    user: "1000:1000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/schedule"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
