@@ -19,8 +19,9 @@ RUN npm ci --only=production && npm cache clean --force
 COPY src/server/*.js ./
 COPY src/public/ ./public/
 
-# 创建数据目录并设置权限
-RUN mkdir -p /data/logs && chmod 750 /data /data/logs
+# 复制入口脚本并设置权限
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # 环境变量
 ENV NODE_ENV=production \
@@ -31,4 +32,4 @@ ENV NODE_ENV=production \
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
