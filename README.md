@@ -22,8 +22,8 @@
 
 面向普通用户的一键部署入口将在应用审核通过后补充：
 
-- 应用商店：`https://app.rainyun.com/apps/rca/store/<APP_ID>`
-- 推广链接：`https://app.rainyun.com/apps/rca/store/<APP_ID>?ref=<UID>`
+- 应用商店：`https://app.rainyun.com/apps/rca/store/7831`
+- 推广链接：`https://app.rainyun.com/apps/rca/store/7831?ref=<UID>`
 
 部署页面会随机生成编辑密码。部署完成后，打开“Web 管理页面”的公网地址即可使用；课表和日志都保存在 `/data`，备份时只需备份该目录。
 

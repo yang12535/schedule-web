@@ -4,10 +4,10 @@
 
 ## 一键部署
 
-应用商店链接将在审核通过后补充：
+应用模板 ID 为 `7831`：
 
-- 商店地址：`https://app.rainyun.com/apps/rca/store/<APP_ID>`
-- 推广地址：`https://app.rainyun.com/apps/rca/store/<APP_ID>?ref=<UID>`
+- 商店地址：`https://app.rainyun.com/apps/rca/store/7831`
+- 推广地址：`https://app.rainyun.com/apps/rca/store/7831?ref=<UID>`
 
 部署完成后，在雨云项目中打开“Web 管理页面”服务提供的公网地址即可访问。
 
@@ -15,7 +15,7 @@
 
 | 项目 | 要求 |
 | --- | --- |
-| CPU | 0.25 核 |
+| CPU | 0.5 核 |
 | 内存 | 256 MB |
 | 内部端口 | 3000/TCP |
 | 持久化目录 | `/data` |

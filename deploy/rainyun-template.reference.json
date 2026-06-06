@@ -1,6 +1,7 @@
 {
   "_notice": "This file is a human-readable reference for filling the RainYun RCA UI. It is not an official import format.",
   "app": {
+    "templateId": 7831,
     "name": "schedule-web",
     "title": "班级课表服务",
     "description": "无需数据库的轻量级班级课表 Web 服务，支持在线编辑、单双周、公告、导入导出和移动端访问。",
@@ -13,7 +14,7 @@
     "version": "1.1.0",
     "image": "ghcr.io/yang12535/schedule-web:1.1.0",
     "resources": {
-      "minCpu": 0.25,
+      "minCpu": 0.5,
       "minMemoryMb": 256
     },
     "command": null,
@@ -85,8 +86,7 @@
       "disabled": false,
       "random": false,
       "validation": {
-        "minLength": 1,
-        "maxLength": 50
+        "rule": "none"
       }
     },
     {
@@ -98,7 +98,7 @@
       "disabled": false,
       "random": false,
       "validation": {
-        "maxLength": 100
+        "rule": "none"
       }
     },
     {
@@ -110,21 +110,20 @@
       "disabled": false,
       "random": false,
       "validation": {
-        "regex": "^\\d{4}-\\d{2}-\\d{2}$",
-        "message": "格式必须为 YYYY-MM-DD，例如 2026-03-01"
+        "rule": "none",
+        "note": "RainYun currently has no custom date-regex rule; the application validates YYYY-MM-DD."
       }
     },
     {
       "label": "编辑密码",
       "envKey": "EDIT_PASSWORD",
-      "type": "password",
+      "type": "text",
       "default": "schedule",
       "required": true,
       "disabled": false,
       "random": true,
       "validation": {
-        "minLength": 8,
-        "maxLength": 64
+        "rule": "password_complexity_6_128"
       }
     }
   ],
