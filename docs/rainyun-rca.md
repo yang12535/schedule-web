@@ -70,7 +70,7 @@
 上架版本固定使用：
 
 ```text
-ghcr.io/yang12535/schedule-web:1.1.1
+ghcr.io/yang12535/schedule-web:1.1.2
 ```
 
 不要在应用模板中使用 `latest`，避免用户重建实例时意外升级到未经验证的版本。

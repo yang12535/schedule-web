@@ -4,6 +4,7 @@
     let totalPeriods = 12, totalWeeks = 16;
     let updateInterval = null; // 修复：用于清理定时器
     const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
+    const { getAcademicWeek, getAcademicDate } = window.ScheduleDateUtils;
     const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
     let periodSettings = [...defaultPeriods];
     let settingsPeriodDraft = null;
@@ -167,21 +168,17 @@
 
     function getCurrentWeek() {
       if (!schedule || !schedule.semesterStart) return 1;
-      const today = new Date();
-      const semesterStart = new Date(schedule.semesterStart);
-      const diff = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(semesterStart.getFullYear(), semesterStart.getMonth(), semesterStart.getDate());
-      return Math.max(1, Math.floor(diff / 604800000) + 1);
+      return getAcademicWeek(schedule.semesterStart, new Date());
     }
 
     function updateWeekDisplay() {
       if (!schedule) return;
       const week = getCurrentWeek() + currentWeekOffset;
       document.getElementById('weekDisplay').textContent = `第${week}周`;
-      const start = new Date(schedule.semesterStart);
       ['monday','tuesday','wednesday','thursday','friday'].forEach((day, i) => {
-        const date = new Date(start.getTime() + (week - 1) * 604800000 + i * 86400000);
+        const date = getAcademicDate(schedule.semesterStart, week, i);
         const dayNumberEl = document.querySelector(`[data-day="${day}"] .day-number`);
-        if (dayNumberEl) {
+        if (dayNumberEl && date) {
           dayNumberEl.textContent = `${date.getMonth()+1}/${date.getDate()}`;
         }
       });
@@ -329,7 +326,6 @@
     function findNextCourse() {
       if (!schedule) return null;
       const now = new Date(), week = getCurrentWeek() + currentWeekOffset, dayOrder = ['monday','tuesday','wednesday','thursday','friday'];
-      const semesterStart = new Date(schedule.semesterStart);
       const courses = [];
       dayOrder.forEach((day, i) => {
         (schedule.courses[day] || []).forEach(c => {
@@ -341,10 +337,9 @@
           for (let courseWeek = Math.max(1, week); courseWeek <= totalWeeks; courseWeek++) {
             if (!isActiveInWeek(c, courseWeek)) continue;
             if (isSkippedInWeek(c, courseWeek)) continue;
-            const candidateTime = new Date(semesterStart.getTime() + (courseWeek - 1) * 604800000 + i * 86400000);
-            candidateTime.setHours(+h, +m, 0, 0);
-            if (candidateTime > now) {
-              courses.push({...c, dayName: dayNames[day], time: candidateTime});
+            const candidateTime = getAcademicDate(schedule.semesterStart, courseWeek, i, +h, +m);
+            if (candidateTime && candidateTime > now) {
+              courses.push({...c, dayName: dayNames[day], time: candidateTime, week: courseWeek});
               break;
             }
           }
@@ -373,7 +368,7 @@
       const next = findNextCourse();
       
       // 清除状态类
-      el.classList.remove('no-class', 'in-class', 'ending-soon');
+      el.classList.remove('no-class', 'in-class', 'ending-soon', 'next-week');
       
       // 情况1：周末或无课
       if (!current && !next) {
@@ -423,11 +418,14 @@
         const diff = next.time - new Date();
         const diffMins = Math.floor(diff / 60000);
         const isToday = isSameDate(next.time, new Date());
+        const viewedWeek = getCurrentWeek() + currentWeekOffset;
+        const isNextWeek = next.week === viewedWeek + 1;
+        if (isNextWeek) el.classList.add('next-week');
         
-        let html = `<div class="next-course-title">⏰ 下一节课</div>`;
+        let html = `<div class="next-course-title">${isNextWeek ? '📅 下一周课程' : '⏰ 下一节课'}</div>`;
         html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
-        html += `<div class="next-course-info">${isToday ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
-        html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
+        html += `<div class="next-course-info">${isNextWeek ? `第${next.week}周 · ` : ''}${isToday ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
+        html += `<div class="next-course-countdown">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
         content.innerHTML = html;
         return;
       }

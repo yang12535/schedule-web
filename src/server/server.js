@@ -251,14 +251,17 @@ function resizePeriodSettings(settings, count) {
 
 const defaultSchedule = {
   name: CLASS_NAME, description: CLASS_DESC, semesterStart: SEMESTER_START,
-  updatedAt: new Date().toISOString(), totalPeriods: 12, totalWeeks: 16,
+  totalPeriods: 12, totalWeeks: 16,
   periodSettings: defaultPeriods,
   courses: {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]},
   announcements: []
 };
 
 function createDefaultSchedule() {
-  return JSON.parse(JSON.stringify(defaultSchedule));
+  return {
+    ...JSON.parse(JSON.stringify(defaultSchedule)),
+    updatedAt: new Date().toISOString()
+  };
 }
 
 let scheduleCache = null;
@@ -438,7 +441,8 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       const schedule = await loadSchedule();
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       const newTotalPeriods = Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20 ? totalPeriods : newSchedule.totalPeriods;
-      if (periodSettings) {
+      const hasPeriodSettings = periodSettings !== undefined;
+      if (hasPeriodSettings) {
         if (!isValidPeriodSettings(periodSettings)) {
           throw new HttpError(400, 'Invalid periodSettings');
         }
@@ -452,7 +456,7 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       if (semesterStart && isValidDateString(semesterStart)) newSchedule.semesterStart = semesterStart;
       if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) newSchedule.totalPeriods = totalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) newSchedule.totalWeeks = totalWeeks;
-      if (totalPeriods !== undefined && !periodSettings) {
+      if (totalPeriods !== undefined && !hasPeriodSettings) {
         newSchedule.periodSettings = newSchedule.periodSettings.slice(0, newSchedule.totalPeriods);
       }
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
@@ -828,7 +832,7 @@ async function init() {
 }
 
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword, checkStorageWritable };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule };
 
 if (require.main === module) {
   init().then(() => {

@@ -20,7 +20,7 @@ process.env.CLASS_DESC = 'Test Description';
 process.env.SEMESTER_START = '2024-03-01';
 
 const request = require('supertest');
-const { app, init, resolveEditPassword, checkStorageWritable } = require('../src/server/server');
+const { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule } = require('../src/server/server');
 
 describe('Schedule API', () => {
   beforeAll(async () => {
@@ -44,6 +44,21 @@ describe('Schedule API', () => {
       expect(res.body).toHaveProperty('courses');
       expect(res.body).toHaveProperty('periodSettings');
       expect(Array.isArray(res.body.courses.monday)).toBe(true);
+    });
+
+    it('每次创建默认课表时应生成当前时间的 updatedAt', () => {
+      jest.useFakeTimers();
+      try {
+        jest.setSystemTime(new Date('2026-06-07T01:00:00.000Z'));
+        const first = createDefaultSchedule();
+        jest.setSystemTime(new Date('2026-06-07T02:00:00.000Z'));
+        const second = createDefaultSchedule();
+
+        expect(first.updatedAt).toBe('2026-06-07T01:00:00.000Z');
+        expect(second.updatedAt).toBe('2026-06-07T02:00:00.000Z');
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 
@@ -165,6 +180,18 @@ describe('Schedule API', () => {
 
       const res = await request(app).get('/api/schedule').expect(200);
       expect(res.body.periodSettings).toHaveLength(12);
+    });
+
+    it.each([null, false])('periodSettings=%p 时应返回 400', async invalidPeriodSettings => {
+      const res = await request(app)
+        .put('/api/schedule/settings')
+        .send({
+          password: 'test123',
+          periodSettings: invalidPeriodSettings
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid periodSettings');
     });
   });
 

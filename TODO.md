@@ -187,13 +187,7 @@
 
 ## 已知问题（待修复）
 
-- [ ] **导出功能 500 错误（Node.js 版本升级导致）**
-  - 位置：`server.js:496`，`/api/export`
-  - 问题：`Content-Disposition` header 中包含裸中文 `_课表.json`，Node.js v19+ 禁止非 ASCII 字符出现在 header 值中，触发 `ERR_INVALID_CHAR`
-  - 根因：v1.0.4 使用 Node.js 18（检查宽松），当前环境升级到 Node.js 20 后同样的代码崩溃
-  - 影响：班级名含中文时导出必现 500
-  - 建议修复：使用 RFC 5987 `filename*=UTF-8''` 编码中文文件名
-  - 状态：非安全漏洞，功能 bug，高峰后处理
+当前没有已确认且尚未修复的阻塞问题。
 
 ---
 ## Copilot 后续建议（非阻塞，低优先级）
@@ -203,10 +197,10 @@
   - 问题：`EDIT_PASSWORD` 现在总是非空（空 env 时 fallback 到 `generatePassword()`），导致 `!EDIT_PASSWORD`（无需密码模式）分支实际上不可达，与 banner 提示和 `requirePassword` 返回值不一致
   - 建议：统一移除不可达分支，或添加显式 `ALLOW_NO_PASSWORD` flag
 
-- [ ] **settings 端点 periodSettings presence 检查**
+- [x] **settings 端点 periodSettings presence 检查**
   - 位置：`server.js:330`
   - 问题：`if (periodSettings)` 对 `null`/`false` 等 falsy 非 undefined 值会静默忽略，客户端可能误以为设置已生效
-  - 建议：改用 `periodSettings !== undefined` 判断字段是否存在，若存在但非数组/无效则返回 400
+  - 修复：改用 `periodSettings !== undefined` 判断字段是否存在，若存在但非数组/无效则返回 400
 
 ---
 

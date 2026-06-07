@@ -104,14 +104,17 @@
     .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: white; border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
     .next-course.no-class { border-color: var(--gray-400); }
     .next-course.in-class { border-color: #10B981; }
+    .next-course.next-week { border-color: var(--primary); }
     .next-course.ending-soon { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2), 0 4px 20px rgba(0,0,0,0.1); animation: pulse-warning 1.2s ease-in-out infinite; }
     .next-course-title { font-size: 14px; color: var(--coral); font-weight: 600; margin-bottom: 8px; }
     .next-course.no-class .next-course-title { color: var(--gray-400); }
     .next-course.in-class .next-course-title { color: #10B981; }
+    .next-course.next-week .next-course-title,
+    .next-course.next-week .next-course-countdown { color: var(--primary); }
     .next-course.ending-soon .next-course-title { color: #D97706; }
     .next-course-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     .next-course-info { font-size: 13px; color: var(--gray-600); }
-    .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; }
+    .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--coral); }
     .next-course-secondary { font-size: 13px; color: var(--gray-400); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--gray-200); }
     @keyframes pulse-warning {
       0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.28), 0 4px 20px rgba(0,0,0,0.1); }
@@ -443,6 +446,7 @@
     <div id="nextCourseContent"></div>
   </div>
 
+  <script src="js/date-utils.js"></script>
   <script src="js/schedule.js"></script>
 </body>
 </html>
