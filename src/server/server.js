@@ -33,7 +33,17 @@ class HttpError extends Error {
 // 输入验证工具函数
 function isValidDateString(str) {
   if (!str || typeof str !== 'string') return false;
-  return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(new Date(str).getTime());
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCFullYear(year);
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
 }
 
 function isValidTimeString(str) {
@@ -60,6 +70,10 @@ function isValidCourse(course) {
   if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
   if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
   if (course.skipWeek !== undefined && course.skipWeek !== null && (!Number.isInteger(course.skipWeek) || course.skipWeek < 1 || course.skipWeek > 30)) return false;
+  if (course.startWeek !== undefined && course.startWeek !== null && (!Number.isInteger(course.startWeek) || course.startWeek < 1 || course.startWeek > 30)) return false;
+  if (course.endWeek !== undefined && course.endWeek !== null && (!Number.isInteger(course.endWeek) || course.endWeek < 1 || course.endWeek > 30)) return false;
+  if (course.startWeek !== undefined && course.startWeek !== null && course.endWeek !== undefined && course.endWeek !== null && course.startWeek > course.endWeek) return false;
+  if (course.weekType !== undefined && course.weekType !== null && !['all', 'odd', 'even'].includes(course.weekType)) return false;
   return true;
 }
 
@@ -120,6 +134,7 @@ function isValidAnnouncement(a) {
   if (typeof a.content !== 'string' || !a.content.trim() || a.content.length > 2000) return false;
   if (a.startDate && !isValidDateString(a.startDate)) return false;
   if (a.endDate && !isValidDateString(a.endDate)) return false;
+  if (a.startDate && a.endDate && a.startDate > a.endDate) return false;
   return true;
 }
 
@@ -453,7 +468,12 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
       }
       if (name !== undefined) newSchedule.name = String(name).slice(0, 100);
       if (description !== undefined) newSchedule.description = String(description).slice(0, 200);
-      if (semesterStart && isValidDateString(semesterStart)) newSchedule.semesterStart = semesterStart;
+      if (semesterStart !== undefined) {
+        if (!isValidDateString(semesterStart)) {
+          throw new HttpError(400, 'Invalid semesterStart');
+        }
+        newSchedule.semesterStart = semesterStart;
+      }
       if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) newSchedule.totalPeriods = totalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) newSchedule.totalWeeks = totalWeeks;
       if (totalPeriods !== undefined && !hasPeriodSettings) {
@@ -541,6 +561,9 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
     }
     if (announcement.endDate && !isValidDateString(announcement.endDate)) {
       return res.status(400).json({error:'Invalid endDate format'});
+    }
+    if (announcement.startDate && announcement.endDate && announcement.startDate > announcement.endDate) {
+      return res.status(400).json({error:'Invalid date range'});
     }
     if (!isValidAnnouncement(announcement)) {
       return res.status(400).json({error:'标题或内容格式不正确'});

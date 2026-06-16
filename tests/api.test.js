@@ -131,6 +131,42 @@ describe('Schedule API', () => {
         .expect(403);
     });
 
+    it.each([
+      ['非整数 startWeek', { startWeek: 1.5 }],
+      ['非整数 endWeek', { endWeek: '16' }],
+      ['startWeek 大于 endWeek', { startWeek: 12, endWeek: 2 }],
+      ['未知 weekType', { weekType: 'monthly' }]
+    ])('应拒绝无效周元数据：%s', async (_name, overrides) => {
+      const course = {
+        id: 'invalid-week-meta',
+        name: '异常周次课程',
+        location: 'A101',
+        teacher: '张老师',
+        period: '1',
+        type: 'default',
+        startWeek: 1,
+        endWeek: 16,
+        weekType: 'all',
+        ...overrides
+      };
+
+      const res = await request(app)
+        .put('/api/schedule/courses')
+        .send({
+          password: 'test123',
+          courses: {
+            monday: [course],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          }
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid courses data');
+    });
+
     it('XSS 课程名应能被正常保存（转义由前端负责）', async () => {
       const malicious = {
         password: 'test123',
@@ -200,6 +236,22 @@ describe('Schedule API', () => {
         .expect(400);
 
       expect(res.body.error).toBe('Invalid periodSettings');
+    });
+
+    it.each(['2026-02-30', 'not-a-date', ''])('semesterStart=%p 时应返回 400 且不更新状态', async invalidSemesterStart => {
+      const before = await request(app).get('/api/schedule').expect(200);
+
+      const res = await request(app)
+        .put('/api/schedule/settings')
+        .send({
+          password: 'test123',
+          semesterStart: invalidSemesterStart
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid semesterStart');
+      const after = await request(app).get('/api/schedule').expect(200);
+      expect(after.body.semesterStart).toBe(before.body.semesterStart);
     });
   });
 
@@ -411,6 +463,42 @@ describe('Schedule API', () => {
 
       expect(res.body.error).toBe('Invalid totalPeriods');
     });
+
+    it.each([
+      ['非整数 startWeek', { startWeek: 1.5 }],
+      ['startWeek 大于 endWeek', { startWeek: 8, endWeek: 3 }],
+      ['未知 weekType', { weekType: 'monthly' }]
+    ])('导入时应拒绝无效周元数据：%s', async (_name, overrides) => {
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '异常周元数据课表',
+          courses: {
+            monday: [{
+              id: 'import-invalid-week-meta',
+              name: '异常周次课程',
+              period: '1',
+              type: 'default',
+              startWeek: 1,
+              endWeek: 16,
+              weekType: 'all',
+              ...overrides
+            }],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: []
+          }
+        }
+      };
+
+      const res = await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid courses structure');
+    });
   });
 
   describe('GET /api/announcements', () => {
@@ -424,6 +512,44 @@ describe('Schedule API', () => {
         .set('x-password', 'test123')
         .expect(200);
       expect(Array.isArray(res.body.announcements)).toBe(true);
+    });
+  });
+
+  describe('POST /api/announcements', () => {
+    it.each([
+      ['startDate', { startDate: '2026-02-30' }, 'Invalid startDate format'],
+      ['endDate', { endDate: '2026-02-30' }, 'Invalid endDate format']
+    ])('应拒绝无效日历日期：%s', async (_field, dateFields, expectedError) => {
+      const res = await request(app)
+        .post('/api/announcements')
+        .send({
+          password: 'test123',
+          announcement: {
+            title: '日期异常公告',
+            content: '内容',
+            ...dateFields
+          }
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe(expectedError);
+    });
+
+    it('应拒绝开始日期晚于结束日期的公告', async () => {
+      const res = await request(app)
+        .post('/api/announcements')
+        .send({
+          password: 'test123',
+          announcement: {
+            title: '日期范围异常公告',
+            content: '内容',
+            startDate: '2026-06-20',
+            endDate: '2026-06-01'
+          }
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid date range');
     });
   });
 
