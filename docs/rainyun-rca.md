@@ -26,6 +26,8 @@
 - `/data/schedule.json`：课表、设置和公告。
 - `/data/logs/`：运行日志。
 
+`/healthz` 会验证 `/data` 可写和原子重命名能力，并返回安全响应头。该接口用于平台探活，不计入用户访问量。
+
 ## 部署选项
 
 | 选项 | 说明 | 建议 |
@@ -58,6 +60,16 @@
 | `CLASS_DESC` | 空 | 学期描述 |
 | `SEMESTER_START` | 当年 `03-01` | 学期开始日期 |
 | `EDIT_PASSWORD` | 自动生成 | 编辑密码 |
+
+## 日志与访问统计
+
+应用日志写入 `/data/logs/schedule-YYYY-MM-DD.log`。动态请求日志格式为：
+
+```text
+[HH:mm:ss] GET /api/schedule - IP: 127.0.0.1
+```
+
+统计历史访问量时，建议按天统计 `GET /api/schedule`，因为页面首屏会请求该接口；`/healthz` 是平台健康检查，不应作为用户访问量。管理日志接口需要使用 `x-password` header 传入编辑密码，避免密码进入 URL 和日志。
 
 ## 备份与恢复
 

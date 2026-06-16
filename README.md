@@ -176,8 +176,18 @@ schedule-web/
 - 可通过 `EDIT_PASSWORD` 环境变量自定义密码
 - 只有显式传入空字符串才会关闭密码保护，公网部署禁止这样配置
 - Docker Compose 未设置该变量时不会把它误传为空密码
+- 编辑课程、设置、公告管理和日志读取都需要编辑密码；管理类读取接口使用 `x-password` header，避免密码进入 URL 或访问日志
+- 公开公告只通过 `/api/announcements/active` 返回当前生效内容，不暴露后台公告列表
+- 默认响应头包含 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY` 和 `Referrer-Policy: strict-origin-when-cross-origin`
 - 所有持久化数据均存储在 `/data`，本地 Compose 对应 `data/` 目录
 - **v1.0.2 安全加固**：添加 XSS 防护、路径遍历防护、输入验证
+
+## 📊 日志与访问统计
+
+- 运行日志保存在 `/data/logs/schedule-YYYY-MM-DD.log`，每条动态请求记录为 `METHOD path - IP: ...`
+- 日志会过滤 URL 中的 `password`、`token`、`secret` 和 `api_key` 参数；需要传密码的管理接口应使用 header 或请求体
+- `GET /healthz` 用于平台健康检查，不作为用户访问量统计口径
+- 首屏会请求 `GET /api/schedule`，按天统计该接口可近似得到页面访问量
 
 ## ❓ 常见问题
 
@@ -237,10 +247,11 @@ environment:
 
 ## 📝 更新日志
 
-### v1.1.2 (2026-06-07) - 保存与课表日期修复
+### v1.1.2 (2026-06-16) - 保存、课表日期与安全修复
 - ✅ 默认课表回退时生成新的更新时间，并严格校验节次设置
 - ✅ 修复周标签和下一节课候选日期偏移
 - ✅ 下一周课程改为蓝色提示并显示目标教学周
+- ✅ 管理用公告列表需要编辑密码 header，安全响应头覆盖健康检查、静态文件和 API
 
 ### v1.1.1 (2026-06-06) - 雨云持久化权限修复
 - ✅ 挂载 `/data` 后自动修正目录所有权，再降权运行服务
