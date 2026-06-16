@@ -298,10 +298,6 @@ app.get('/healthz', async (req, res) => {
   }
 });
 
-// 静态文件路径 - 支持两种部署方式
-const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
-app.use(express.static(publicPath));
-
 // 安全响应头
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -309,6 +305,10 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
+
+// 静态文件路径 - 支持两种部署方式
+const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
+app.use(express.static(publicPath));
 
 // 通用速率限制
 app.use(generalRateLimit);
@@ -515,7 +515,7 @@ app.get('/api/announcements/active', async (req, res) => {
 });
 
 // 获取所有公告（管理用）
-app.get('/api/announcements', async (req, res) => {
+app.get('/api/announcements', strictRateLimit, requireHeaderAuth, async (req, res) => {
   try {
     const schedule = await loadSchedule();
     res.json({announcements: schedule.announcements || []});
@@ -749,8 +749,8 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
   }
 });
 
-// 日志接口认证中间件（仅允许 header 传参，防止密码写入 URL 日志）
-function requireLogAuth(req, res, next) {
+// 只允许 header 传参，防止密码写入 URL 日志。
+function requireHeaderAuth(req, res, next) {
   const rawPassword = req.headers['x-password'];
   const password = Array.isArray(rawPassword) ? rawPassword[0] : (rawPassword || '');
   if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
@@ -759,7 +759,7 @@ function requireLogAuth(req, res, next) {
   next();
 }
 
-app.get('/api/logs', strictRateLimit, requireLogAuth, async (req, res) => {
+app.get('/api/logs', strictRateLimit, requireHeaderAuth, async (req, res) => {
   try {
     await fs.mkdir(LOG_DIR, { recursive: true });
     const files = await fs.readdir(LOG_DIR);
@@ -771,7 +771,7 @@ app.get('/api/logs', strictRateLimit, requireLogAuth, async (req, res) => {
   }
 });
 
-app.get('/api/logs/:file', strictRateLimit, requireLogAuth, async (req, res) => {
+app.get('/api/logs/:file', strictRateLimit, requireHeaderAuth, async (req, res) => {
   try {
     const file = req.params.file;
     if (!file.match(/^schedule-\d{4}-\d{2}-\d{2}\.log$/)) {

@@ -958,7 +958,9 @@
       if (!container) return;
       let list = [];
       try {
-        const res = await fetch('/api/announcements');
+        const res = await fetch('/api/announcements', {
+          headers: {'x-password': sessionStorage.getItem('scheduleEditPwd') || ''}
+        });
         const data = await res.json();
         list = data.announcements || [];
       } catch (err) {

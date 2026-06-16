@@ -18,6 +18,7 @@ process.env.EDIT_PASSWORD = 'test123';
 process.env.CLASS_NAME = 'TestClass';
 process.env.CLASS_DESC = 'Test Description';
 process.env.SEMESTER_START = '2024-03-01';
+process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
 const { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule } = require('../src/server/server');
@@ -44,6 +45,13 @@ describe('Schedule API', () => {
       expect(res.body).toHaveProperty('courses');
       expect(res.body).toHaveProperty('periodSettings');
       expect(Array.isArray(res.body.courses.monday)).toBe(true);
+    });
+
+    it('静态入口也应带安全响应头', async () => {
+      const res = await request(app).get('/').expect(200);
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['x-frame-options']).toBe('DENY');
+      expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
     });
 
     it('每次创建默认课表时应生成当前时间的 updatedAt', () => {
@@ -406,8 +414,15 @@ describe('Schedule API', () => {
   });
 
   describe('GET /api/announcements', () => {
-    it('应返回公告列表', async () => {
-      const res = await request(app).get('/api/announcements').expect(200);
+    it('未授权时不应返回管理用公告列表', async () => {
+      await request(app).get('/api/announcements').expect(403);
+    });
+
+    it('带正确 header 密码时应返回公告列表', async () => {
+      const res = await request(app)
+        .get('/api/announcements')
+        .set('x-password', 'test123')
+        .expect(200);
       expect(Array.isArray(res.body.announcements)).toBe(true);
     });
   });
