@@ -268,6 +268,14 @@ let scheduleCache = null;
 
 app.use(express.json({ limit: '1mb' }));
 
+// 安全响应头
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 async function checkStorageWritable(dataFile = DATA_FILE) {
   const dataDir = path.dirname(dataFile);
   const suffix = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
@@ -296,14 +304,6 @@ app.get('/healthz', async (req, res) => {
     console.error('存储健康检查失败:', err.message);
     res.status(503).json({ ok: false, service: 'schedule-web', storage: 'unavailable' });
   }
-});
-
-// 安全响应头
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  next();
 });
 
 // 静态文件路径 - 支持两种部署方式

@@ -431,6 +431,9 @@ describe('Schedule API', () => {
     it('持久化目录可写时应返回健康状态', async () => {
       const res = await request(app).get('/healthz').expect(200);
       expect(res.body).toEqual({ ok: true, service: 'schedule-web' });
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['x-frame-options']).toBe('DENY');
+      expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
     });
 
     it('应实际验证写入和原子重命名', async () => {
