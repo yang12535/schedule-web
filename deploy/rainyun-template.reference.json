@@ -1,5 +1,6 @@
 {
   "_notice": "This file is a human-readable reference for filling the RainYun RCA UI. It is not an official import format.",
+  "_status": "RainYun platform listing is not complete yet; IDs and options are for pre-launch review only.",
   "app": {
     "templateId": 7831,
     "name": "schedule-web",
