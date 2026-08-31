@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# Node modules
+node_modules
+npm-debug.log*
+
+# 数据与日志（运行时生成）
+data
+logs
+
+# 测试
+tests
+coverage
+
+# 部署脚本（镜像内不需要）
+deploy
+
+# 文档
+README.md
+CHANGELOG.md
+BUGFIX.md
+TODO.md
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
