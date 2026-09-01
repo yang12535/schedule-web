@@ -29,6 +29,8 @@ services:
       - SEMESTER_START=${SEMESTER_START:-2026-03-01}
       # 公网只读入口端口（可选；须与主端口 3000 不同，留空表示关闭）。
       - READONLY_PORT=${READONLY_PORT:-}
+      # ICP 备案号（可选；设置后页脚/只读页展示，留空表示不展示）。
+      - ICP_NUMBER=${ICP_NUMBER:-}
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
       - PUBLIC_PATH=/app/public
