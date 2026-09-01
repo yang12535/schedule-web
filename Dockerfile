@@ -11,9 +11,11 @@ ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
-# 安装依赖
+# 安装依赖（可用 --build-arg NPM_REGISTRY=https://registry.npmmirror.com 走国内镜像）
+ARG NPM_REGISTRY=
 COPY src/server/package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
+    && npm ci --only=production && npm cache clean --force
 
 # 复制应用代码
 COPY src/server/*.js ./

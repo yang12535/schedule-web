@@ -5,6 +5,8 @@
     let updateInterval = null; // 修复：用于清理定时器
     const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
     const { getAcademicWeek, getAcademicDate } = window.ScheduleDateUtils;
+    const { getHolidayInfo } = window.ScheduleHolidays || {};
+    const { copyCoursesForMakeupDay, createMakeupDay } = window.ScheduleMakeupDays || {};
     const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
     let periodSettings = [...defaultPeriods];
     let settingsPeriodDraft = null;
@@ -87,9 +89,35 @@
       return option;
     }
 
+    // ===== 站点 UI 配置（只读公网入口 / ICP 页脚） =====
+    let isReadonlyPublic = false;
+
+    async function loadUiConfig() {
+      try {
+        const res = await fetch('/api/ui-config');
+        if (!res.ok) return;
+        const cfg = await res.json();
+        if (cfg.readonly) {
+          isReadonlyPublic = true;
+          const modeBtn = document.getElementById('modeBtn');
+          if (modeBtn) modeBtn.style.display = 'none';
+        }
+        if (cfg.icpNumber) {
+          const link = document.getElementById('icpNumberLink');
+          const footer = document.getElementById('icpFooter');
+          if (link) link.textContent = cfg.icpNumber;
+          if (footer) footer.style.display = 'block';
+        }
+      } catch (err) {
+        console.error('加载 UI 配置失败:', err);
+      }
+    }
+
     async function init() {
       try {
         await loadSchedule();
+        // 等待只读配置返回后再开放交互，避免用户抢先点到「查看/编辑」按钮
+        await loadUiConfig();
         initWeekOptions();
         initPeriodSettings();
         updateDate();
@@ -162,8 +190,9 @@
     }
 
     function updateDate() { 
-      const d = new Date(), w = ['日','一','二','三','四','五','六']; 
-      document.getElementById('currentDate').textContent = `${d.getMonth()+1}月${d.getDate()}日 周${w[d.getDay()]}`; 
+      const d = new Date(), w = ['日','一','二','三','四','五','六'];
+      const week = schedule && schedule.semesterStart ? getAcademicWeek(schedule.semesterStart, d) : 1;
+      document.getElementById('currentDate').textContent = `${d.getMonth()+1}月${d.getDate()}日 周${w[d.getDay()]} · 第${week}周`; 
     }
 
     function getCurrentWeek() {
@@ -177,9 +206,22 @@
       document.getElementById('weekDisplay').textContent = `第${week}周`;
       ['monday','tuesday','wednesday','thursday','friday'].forEach((day, i) => {
         const date = getAcademicDate(schedule.semesterStart, week, i);
-        const dayNumberEl = document.querySelector(`[data-day="${day}"] .day-number`);
+        const tab = document.querySelector(`[data-day="${day}"]`);
+        const dayNumberEl = tab ? tab.querySelector('.day-number') : null;
         if (dayNumberEl && date) {
           dayNumberEl.textContent = `${date.getMonth()+1}/${date.getDate()}`;
+        }
+        // 节假日「休/班」标注
+        if (tab) {
+          tab.querySelectorAll('.holiday-badge,.workday-badge').forEach(el => el.remove());
+          const info = date && typeof getHolidayInfo === 'function' ? getHolidayInfo(date) : null;
+          if (info) {
+            const badge = document.createElement('span');
+            badge.className = info.type === 'holiday' ? 'holiday-badge' : 'workday-badge';
+            badge.textContent = info.type === 'holiday' ? '休' : '班';
+            badge.title = info.name;
+            tab.appendChild(badge);
+          }
         }
       });
     }
@@ -296,6 +338,16 @@
       if (!schedule || !container) return;
       const courses = schedule.courses[currentDay] || [];
       let html = isEditMode ? `<button class="add-btn" data-action="add-course">+ 添加${escapeHtml(dayNames[currentDay])}课程</button>` : '';
+      // 节假日/调休标注横幅（只标注，不重排课表）
+      const viewedWeek = getCurrentWeek() + currentWeekOffset;
+      const viewedDayIndex = ['monday','tuesday','wednesday','thursday','friday'].indexOf(currentDay);
+      const viewedDate = viewedDayIndex >= 0 ? getAcademicDate(schedule.semesterStart, viewedWeek, viewedDayIndex) : null;
+      const viewedHoliday = viewedDate && typeof getHolidayInfo === 'function' ? getHolidayInfo(viewedDate) : null;
+      if (viewedHoliday && viewedHoliday.type === 'holiday') {
+        html += `<div class="holiday-notice">🎉 ${escapeHtml(viewedHoliday.name)}假期（${escapeHtml(viewedHoliday.start)} ~ ${escapeHtml(viewedHoliday.end)}），上课安排以学校通知为准</div>`;
+      } else if (viewedHoliday && viewedHoliday.type === 'workday') {
+        html += `<div class="holiday-notice workday">🛠️ ${escapeHtml(viewedHoliday.name)}（调休上班），课程安排以学校通知为准</div>`;
+      }
       if (!courses.length) {
         html += `<div class="empty-state"><div class="empty-state-icon">📚</div><p>${isEditMode ? '暂无课程' : '今日无课'}</p></div>`;
       } else {
@@ -321,6 +373,7 @@
         });
       }
       container.innerHTML = html;
+      renderMakeupDays();
     }
 
     function findNextCourse() {
@@ -463,6 +516,47 @@
           };
         }
       });
+      // ICS 订阅弹窗：点遮罩关闭
+      const icsModalEl = document.getElementById('icsModal');
+      if (icsModalEl) {
+        icsModalEl.onclick = e => { if (e.target.id === 'icsModal') closeIcsModal(); };
+      }
+      // 调休补课弹窗：点遮罩关闭
+      const makeupDayModalEl = document.getElementById('makeupDayModal');
+      if (makeupDayModalEl) {
+        makeupDayModalEl.onclick = e => { if (e.target.id === 'makeupDayModal') closeMakeupDayModal(); };
+      }
+      const makeupCoursesModalEl = document.getElementById('makeupCoursesModal');
+      if (makeupCoursesModalEl) {
+        makeupCoursesModalEl.onclick = e => { if (e.target.id === 'makeupCoursesModal') closeMakeupCoursesModal(); };
+      }
+      // 补课课程来源切换（复制周X / 自建课程）
+      const makeupModeSel = document.getElementById('makeupCoursesMode');
+      if (makeupModeSel) {
+        makeupModeSel.addEventListener('change', toggleMakeupCoursesMode);
+      }
+      // 自建课程行动态增删，用事件委托避免 innerHTML 替换后事件丢失
+      const makeupRowsContainer = document.getElementById('makeupCourseRows');
+      if (makeupRowsContainer) {
+        makeupRowsContainer.addEventListener('click', e => {
+          const btn = e.target.closest('[data-action="makeup-remove-row"]');
+          if (btn) btn.closest('.makeup-course-form-row').remove();
+        });
+      }
+      // 调休补课区块事件委托
+      const makeupSection = document.getElementById('makeupDaysSection');
+      if (makeupSection) {
+        makeupSection.addEventListener('click', e => {
+          const btn = e.target.closest('[data-action]');
+          if (!btn) return;
+          const action = btn.dataset.action;
+          const id = btn.dataset.id;
+          if (action === 'add-makeup-day') openMakeupDayModal();
+          else if (action === 'makeup-add-courses' || action === 'makeup-edit-courses') openMakeupCoursesModal(id);
+          else if (action === 'makeup-revert') revertMakeupDay(id);
+          else if (action === 'makeup-delete') deleteMakeupDay(id);
+        });
+      }
       const pwdInput = document.getElementById('passwordInput');
       if (pwdInput) {
         pwdInput.addEventListener('keypress', e => { if(e.key === 'Enter') verifyPassword(); });
@@ -506,6 +600,7 @@
     }
 
     async function toggleMode() {
+      if (isReadonlyPublic) return; // 公网只读入口无编辑模式
       if (isEditMode) { 
         isEditMode = false; 
         updateModeUI(); 
@@ -513,6 +608,14 @@
       } else {
         try {
           const res = await fetch('/api/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:''})});
+          // 只读入口的写接口返回 403 JSON，不能据此进入编辑模式
+          if (!res.ok) {
+            if (res.status === 403) {
+              showToast('当前为只读入口，无法进入编辑模式', 'error');
+              return;
+            }
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
           const data = await res.json();
           if (data.requirePassword) {
             document.getElementById('passwordModal').classList.add('active');
@@ -631,6 +734,8 @@
           document.getElementById('classDesc').textContent = description || '点击右上角切换编辑模式';
           document.title = name;
           closeSettingsModal(); updateWeekDisplay(); renderSchedule();
+          // 学期起始日可能已变，刷新头部「第N周」
+          updateDate();
           showToast('设置已保存', 'success');
         } else showToast(data.error || '保存失败', 'error');
       } catch (err) {
@@ -798,6 +903,34 @@
       // 修复：清空后立即保存到服务器
       await autoSave();
       showToast('已清空并保存', 'success');
+    }
+
+    // ===== ICS 日历订阅 =====
+    function openIcsModal() {
+      const input = document.getElementById('icsLinkInput');
+      if (input) input.value = `${location.origin}/api/calendar.ics`;
+      document.getElementById('icsModal').classList.add('active');
+      const nextCourse = document.getElementById('nextCourse');
+      if (nextCourse) nextCourse.style.display = 'none';
+    }
+
+    function closeIcsModal() {
+      document.getElementById('icsModal').classList.remove('active');
+      const nextCourse = document.getElementById('nextCourse');
+      if (nextCourse) nextCourse.style.display = 'block';
+    }
+
+    async function copyIcsLink() {
+      const input = document.getElementById('icsLinkInput');
+      if (!input) return;
+      try {
+        await navigator.clipboard.writeText(input.value);
+        showToast('链接已复制', 'success');
+      } catch (err) {
+        input.select();
+        document.execCommand('copy');
+        showToast('链接已复制', 'success');
+      }
     }
 
     function exportData() {
@@ -1056,6 +1189,221 @@
         }
       } catch (err) {
         console.error('删除公告失败:', err);
+        showToast('网络错误', 'error');
+      }
+    }
+
+    // ===== 调休补课日（「班」日） =====
+    // makeupDays 是后续追加入口：随时可新增补课日，等学校通知后再补课程
+    let editingMakeupDayId = null;
+
+    function getMakeupDays() {
+      return schedule && Array.isArray(schedule.makeupDays) ? schedule.makeupDays : [];
+    }
+
+    function makeupDateInfo(dateStr) {
+      // '2026-09-20' → { label: '9月20日', weekName: '周六' }
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+      if (!m) return { label: dateStr || '', weekName: '' };
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      const weekNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+      return { label: `${Number(m[2])}月${Number(m[3])}日`, weekName: weekNames[d.getDay()] };
+    }
+
+    function renderMakeupDays() {
+      const section = document.getElementById('makeupDaysSection');
+      if (!section || !schedule) return;
+      const days = getMakeupDays();
+      // 只读入口只显示不编辑：编辑入口仅在自己的编辑模式下渲染
+      const canEdit = isEditMode && !isReadonlyPublic;
+      let html = '';
+      if (canEdit) {
+        html += `<button class="add-btn" data-action="add-makeup-day">+ 新增补课日</button>`;
+      }
+      if (days.length) {
+        html += `<div class="makeup-days-title">🛠️ 调休补课</div>`;
+      }
+      [...days].sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).forEach(day => {
+        const info = makeupDateInfo(day.date);
+        const confirmed = day.status === 'confirmed';
+        const badge = confirmed
+          ? '<span class="makeup-day-badge confirmed">班</span>'
+          : '<span class="makeup-day-badge pending">待添加·等待通知</span>';
+        html += `
+          <div class="makeup-day-card ${confirmed ? '' : 'pending'}">
+            <div class="makeup-day-header">
+              <div>
+                <div class="makeup-day-title">${escapeHtml(info.label)} ${escapeHtml(info.weekName)}${day.name ? ` · ${escapeHtml(day.name)}` : ''}</div>
+                ${confirmed && day.copyFrom ? `<div class="makeup-day-sub">补${escapeHtml(dayNames[day.copyFrom] || '')}的课</div>` : ''}
+              </div>
+              ${badge}
+            </div>`;
+        if (confirmed) {
+          const dayCourses = Array.isArray(day.courses) ? day.courses : [];
+          [...dayCourses].sort((a, b) => (parsePeriods(a.period)[0] || 0) - (parsePeriods(b.period)[0] || 0)).forEach(c => {
+            html += `
+            <div class="makeup-course-row">
+              <span class="makeup-course-time">${escapeHtml(formatPeriod(c.period))} ${escapeHtml(getTimeText(c.period))}</span>
+              <span class="makeup-course-name">${escapeHtml(c.name)}</span>
+              <span class="makeup-course-meta">${c.teacher ? escapeHtml(`👤${c.teacher}`) : ''}${c.location ? escapeHtml(` 📍${c.location}`) : ''}</span>
+            </div>`;
+          });
+        } else {
+          html += `<div class="makeup-day-sub" style="margin-top: 8px;">等待学校通知补哪天的课</div>`;
+        }
+        if (canEdit) {
+          html += `<div class="makeup-day-actions">`;
+          if (confirmed) {
+            html += `<button data-action="makeup-edit-courses" data-id="${escapeAttr(day.id)}">编辑课程</button>`;
+            html += `<button data-action="makeup-revert" data-id="${escapeAttr(day.id)}">改回待添加</button>`;
+          } else {
+            html += `<button data-action="makeup-add-courses" data-id="${escapeAttr(day.id)}">添加课程</button>`;
+          }
+          html += `<button class="danger" data-action="makeup-delete" data-id="${escapeAttr(day.id)}">删除</button>`;
+          html += `</div>`;
+        }
+        html += `</div>`;
+      });
+      section.innerHTML = html;
+      section.style.display = html ? 'block' : 'none';
+    }
+
+    function openMakeupDayModal() {
+      document.getElementById('makeupDayDate').value = '';
+      document.getElementById('makeupDayName').value = '';
+      document.getElementById('makeupDayModal').classList.add('active');
+    }
+
+    function closeMakeupDayModal() {
+      document.getElementById('makeupDayModal').classList.remove('active');
+    }
+
+    async function saveMakeupDay() {
+      const date = document.getElementById('makeupDayDate').value;
+      const name = document.getElementById('makeupDayName').value.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return showToast('请选择补课日期', 'error');
+      }
+      if (getMakeupDays().some(d => d.date === date)) {
+        return showToast('该日期的补课日已存在', 'error');
+      }
+      schedule.makeupDays = getMakeupDays().slice();
+      schedule.makeupDays.push(createMakeupDay(date, name));
+      closeMakeupDayModal();
+      renderMakeupDays();
+      await saveMakeupDays();
+    }
+
+    function toggleMakeupCoursesMode() {
+      const mode = document.getElementById('makeupCoursesMode').value;
+      document.getElementById('makeupCopyGroup').style.display = mode === 'copy' ? 'block' : 'none';
+      document.getElementById('makeupCustomGroup').style.display = mode === 'custom' ? 'block' : 'none';
+    }
+
+    function addMakeupCourseRow(course) {
+      const container = document.getElementById('makeupCourseRows');
+      if (!container) return;
+      const c = course || {};
+      const row = document.createElement('div');
+      row.className = 'makeup-course-form-row';
+      row.innerHTML = `
+        <div class="form-row">
+          <input type="text" class="form-input makeup-row-name" placeholder="课名 *" value="${escapeAttr(c.name || '')}">
+          <input type="text" class="form-input makeup-row-period" placeholder="节次，如 1-2" value="${escapeAttr(c.period || '')}">
+        </div>
+        <div class="form-row" style="margin-top: 8px;">
+          <input type="text" class="form-input makeup-row-teacher" placeholder="教师" value="${escapeAttr(c.teacher || '')}">
+          <input type="text" class="form-input makeup-row-location" placeholder="地点" value="${escapeAttr(c.location || '')}">
+        </div>
+        <button type="button" class="row-del" data-action="makeup-remove-row">删除本条</button>`;
+      container.appendChild(row);
+    }
+
+    function openMakeupCoursesModal(id) {
+      const day = getMakeupDays().find(d => d.id === id);
+      if (!day) return;
+      editingMakeupDayId = id;
+      const info = makeupDateInfo(day.date);
+      document.getElementById('makeupCoursesTitle').textContent = `${info.label} 补课课程`;
+      document.getElementById('makeupCoursesMode').value = day.status === 'confirmed' ? 'custom' : 'copy';
+      if (day.copyFrom) document.getElementById('makeupCopyFrom').value = day.copyFrom;
+      toggleMakeupCoursesMode();
+      document.getElementById('makeupCourseRows').innerHTML = '';
+      const existing = Array.isArray(day.courses) ? day.courses : [];
+      if (existing.length) existing.forEach(c => addMakeupCourseRow(c));
+      else addMakeupCourseRow();
+      document.getElementById('makeupCoursesModal').classList.add('active');
+    }
+
+    function closeMakeupCoursesModal() {
+      document.getElementById('makeupCoursesModal').classList.remove('active');
+      editingMakeupDayId = null;
+    }
+
+    async function saveMakeupCourses() {
+      const day = getMakeupDays().find(d => d.id === editingMakeupDayId);
+      if (!day) return closeMakeupCoursesModal();
+      const mode = document.getElementById('makeupCoursesMode').value;
+      let courses = [];
+      let copyFrom = null;
+      if (mode === 'copy') {
+        // 复制平时某周几的课程：深拷贝进 courses 并置 confirmed
+        copyFrom = document.getElementById('makeupCopyFrom').value;
+        courses = copyCoursesForMakeupDay(schedule.courses, copyFrom);
+        if (!courses.length) {
+          return showToast(`${dayNames[copyFrom] || ''}没有课程可复制`, 'error');
+        }
+      } else {
+        for (const row of document.querySelectorAll('#makeupCourseRows .makeup-course-form-row')) {
+          const name = row.querySelector('.makeup-row-name').value.trim();
+          const period = row.querySelector('.makeup-row-period').value.trim();
+          if (!name && !period) continue; // 跳过全空行
+          if (!name || !period) return showToast('请填写课名和节次', 'error');
+          if (!parsePeriods(period).length) return showToast('节次格式不正确，例如：1-2 或 3', 'error');
+          courses.push({
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+            name, period,
+            teacher: row.querySelector('.makeup-row-teacher').value.trim(),
+            location: row.querySelector('.makeup-row-location').value.trim()
+          });
+        }
+        if (!courses.length) return showToast('请至少添加一条课程', 'error');
+      }
+      day.courses = courses;
+      day.copyFrom = copyFrom;
+      day.status = 'confirmed';
+      closeMakeupCoursesModal();
+      renderMakeupDays();
+      await saveMakeupDays();
+    }
+
+    async function revertMakeupDay(id) {
+      const ok = await showConfirmModal('确定改回「待添加」？已填写的课程将被清空。');
+      if (!ok) return;
+      const day = getMakeupDays().find(d => d.id === id);
+      if (!day) return;
+      day.status = 'pending';
+      day.copyFrom = null;
+      day.courses = [];
+      renderMakeupDays();
+      await saveMakeupDays();
+    }
+
+    async function deleteMakeupDay(id) {
+      const ok = await showConfirmModal('确定删除这个补课日？');
+      if (!ok) return;
+      schedule.makeupDays = getMakeupDays().filter(d => d.id !== id);
+      renderMakeupDays();
+      await saveMakeupDays();
+    }
+
+    async function saveMakeupDays() {
+      try {
+        const res = await fetch('/api/schedule/makeup-days', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:sessionStorage.getItem('scheduleEditPwd')||'',makeupDays:getMakeupDays()})});
+        const data = await res.json();
+        showToast(data.success ? '补课日已保存' : data.error || '保存失败', data.success ? 'success' : 'error');
+      } catch (err) {
+        console.error('保存补课日失败:', err);
         showToast('网络错误', 'error');
       }
     }

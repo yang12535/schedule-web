@@ -3,6 +3,17 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 
+// 与前端共用的 UMD 工具模块；仓库布局（src/server + src/public）与
+// Docker 镜像布局（/app/server.js + /app/public）不同，做双路径回退。
+let ScheduleDateUtils, ScheduleHolidays;
+try {
+  ScheduleDateUtils = require('./public/js/date-utils');
+  ScheduleHolidays = require('./public/js/holidays');
+} catch (err) {
+  ScheduleDateUtils = require('../public/js/date-utils');
+  ScheduleHolidays = require('../public/js/holidays');
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = process.env.DATA_FILE || '/data/schedule.json';
@@ -87,6 +98,28 @@ function isValidCourses(courses) {
     }
   }
   return true;
+}
+
+// ===== 调休补课日（「班」日）校验 =====
+const MAKEUP_WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+
+function isValidMakeupDay(day) {
+  if (!day || typeof day !== 'object' || Array.isArray(day)) return false;
+  if (typeof day.id !== 'string' || !day.id.trim() || day.id.length > 50) return false;
+  if (!isValidDateString(day.date)) return false;
+  if (day.name !== undefined && day.name !== null && (typeof day.name !== 'string' || day.name.length > 50)) return false;
+  if (!['pending', 'confirmed'].includes(day.status)) return false;
+  if (day.copyFrom !== undefined && day.copyFrom !== null && !MAKEUP_WEEKDAYS.includes(day.copyFrom)) return false;
+  if (!Array.isArray(day.courses) || day.courses.length > 20) return false;
+  for (const course of day.courses) {
+    if (!isValidCourse(course)) return false;
+  }
+  return true;
+}
+
+function isValidMakeupDays(arr) {
+  if (!Array.isArray(arr) || arr.length > 50) return false;
+  return arr.every(isValidMakeupDay);
 }
 
 function parsePositivePeriodNumber(value) {
@@ -232,6 +265,20 @@ const EDIT_PASSWORD_CONFIG = resolveEditPassword();
 const EDIT_PASSWORD = EDIT_PASSWORD_CONFIG.value;
 const SEMESTER_START = process.env.SEMESTER_START || `${new Date().getFullYear()}-03-01`;
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+const ICP_NUMBER = process.env.ICP_NUMBER || '';
+const READONLY_PORT = Number(process.env.READONLY_PORT) || 0;
+
+// 只读端口与主端口必须不同：同进程同端口二次 listen 会 EADDRINUSE 崩掉整个服务。
+// 无效配置（超出端口范围 / 与主端口相同）打日志并跳过只读监听，返回 0。
+function resolveReadonlyListenPort(readonlyPort, mainPort) {
+  const port = Number(readonlyPort);
+  if (!Number.isInteger(port) || port <= 0) return 0; // 未配置，不启用
+  if (port > 65535 || port === Number(mainPort)) {
+    console.warn(`READONLY_PORT=${readonlyPort} 无效（需为 1-65535 且与主端口 ${mainPort} 不同），跳过只读入口`);
+    return 0;
+  }
+  return port;
+}
 
 const defaultPeriods = [
   {startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},
@@ -269,7 +316,8 @@ const defaultSchedule = {
   totalPeriods: 12, totalWeeks: 16,
   periodSettings: defaultPeriods,
   courses: {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]},
-  announcements: []
+  announcements: [],
+  makeupDays: []
 };
 
 function createDefaultSchedule() {
@@ -280,6 +328,8 @@ function createDefaultSchedule() {
 }
 
 let scheduleCache = null;
+// 缓存对应的数据文件 mtime；只在 mtime 变化时重读磁盘
+let scheduleCacheMtime = null;
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -354,7 +404,16 @@ function withSaveLock(fn) {
 }
 
 async function loadSchedule() {
-  if (scheduleCache !== null) {
+  // 缓存失效检查：外部直接改 data/schedule.json 时 mtime 变化，下次读取重新加载，无需重启。
+  let stat = null;
+  try {
+    stat = await fs.stat(DATA_FILE);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('检查数据文件状态失败:', err.message);
+    }
+  }
+  if (scheduleCache !== null && stat && scheduleCacheMtime !== null && stat.mtimeMs === scheduleCacheMtime) {
     return scheduleCache;
   }
   try {
@@ -362,15 +421,18 @@ async function loadSchedule() {
     if (!content || content.trim() === '') {
       console.log('数据文件为空，使用默认配置');
       scheduleCache = createDefaultSchedule();
+      scheduleCacheMtime = stat ? stat.mtimeMs : null;
       return scheduleCache;
     }
     const data = JSON.parse(content);
     scheduleCache = {...createDefaultSchedule(), ...data, periodSettings: data.periodSettings || JSON.parse(JSON.stringify(defaultPeriods))};
+    scheduleCacheMtime = stat ? stat.mtimeMs : null;
     return scheduleCache;
   } catch (err) {
     if (err.code === 'ENOENT') {
       console.log('数据文件不存在，使用默认配置');
       scheduleCache = createDefaultSchedule();
+      scheduleCacheMtime = null;
       return scheduleCache;
     } else if (err instanceof SyntaxError) {
       console.error('数据文件格式错误:', err.message);
@@ -383,6 +445,7 @@ async function loadSchedule() {
         console.error('备份损坏文件失败:', backupErr.message);
       }
       scheduleCache = createDefaultSchedule();
+      scheduleCacheMtime = null;
       return scheduleCache;
     } else {
       console.error('加载数据失败:', err.message);
@@ -399,6 +462,12 @@ async function saveSchedule(data) {
     await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
     await fs.rename(tempFile, DATA_FILE);
     scheduleCache = data;
+    // 记录新 mtime，避免自己保存后被误判为外部修改而立刻重读
+    try {
+      scheduleCacheMtime = (await fs.stat(DATA_FILE)).mtimeMs;
+    } catch (e) {
+      scheduleCacheMtime = null;
+    }
   } catch (err) {
     // 清理 rename 失败时残留的临时文件；若文件不存在则静默忽略
     try { await fs.unlink(tempFile); } catch (e) { if (e.code !== 'ENOENT') console.error('清理临时文件失败:', e.message); }
@@ -441,6 +510,35 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
     res.json({success:true});
   } catch (err) {
     console.error('保存课程失败:', err);
+    res.status(500).json({error:'Failed to save'});
+  }
+});
+
+// 调休补课日（「班」日）：整体替换 makeupDays 数组
+app.put('/api/schedule/makeup-days', strictRateLimit, async (req, res) => {
+  try {
+    const {password, makeupDays} = req.body;
+    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+      await logToFile(`密码错误尝试 - 调休补课日更新`);
+      return res.status(403).json({error:'密码错误'});
+    }
+
+    // 验证 makeupDays 数据结构
+    if (!isValidMakeupDays(makeupDays)) {
+      return res.status(400).json({error:'Invalid makeupDays data'});
+    }
+
+    await withSaveLock(async () => {
+      const schedule = await loadSchedule();
+      const newSchedule = JSON.parse(JSON.stringify(schedule));
+      newSchedule.makeupDays = makeupDays;
+      newSchedule.updatedAt = new Date().toISOString();
+      await saveSchedule(newSchedule);
+    });
+    await logToFile(`调休补课日已更新`);
+    res.json({success:true});
+  } catch (err) {
+    console.error('保存调休补课日失败:', err);
     res.status(500).json({error:'Failed to save'});
   }
 });
@@ -495,6 +593,10 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
     console.error('保存设置失败:', err);
     res.status(500).json({error:'Failed to save'});
   }
+});
+
+app.get('/api/ui-config', (req, res) => {
+  res.json({ readonly: false, icpNumber: ICP_NUMBER });
 });
 
 app.post('/api/verify', strictRateLimit, async (req, res) => {
@@ -651,6 +753,279 @@ app.get('/api/export', async (req, res) => {
   } catch (err) {
     console.error('导出失败:', err);
     res.status(500).json({error:'Export failed'});
+  }
+});
+
+// ===== ICS 日历订阅导出 =====
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function formatIcsLocalDateTime(date) {
+  return `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}T${pad2(date.getHours())}${pad2(date.getMinutes())}00`;
+}
+
+function formatIcsUtcDateTime(date) {
+  return `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}00Z`;
+}
+
+function escapeIcsText(text) {
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n');
+}
+
+// RFC 5545 §3.1：content line 不应超过 75 octet，超出时用 CRLF + 单个空格折叠。
+// 按 UTF-8 字节数计算长度，并按字符边界切分，不会截断多字节字符（如中文）。
+function foldIcsLine(line) {
+  if (Buffer.byteLength(line, 'utf8') <= 75) return line;
+  const parts = [];
+  let current = '';
+  let currentBytes = 0;
+  let limit = 75; // 首行最多 75 octet
+  for (const ch of line) {
+    const chBytes = Buffer.byteLength(ch, 'utf8');
+    if (currentBytes + chBytes > limit) {
+      parts.push(current);
+      current = '';
+      currentBytes = 0;
+      limit = 74; // 续行需为前导空格留出 1 octet
+    }
+    current += ch;
+    currentBytes += chBytes;
+  }
+  parts.push(current);
+  return parts.join('\r\n ');
+}
+
+// 与前端 parsePeriods 行为一致：支持 "1-2"、"1,3"、"3"、"第1-2节"
+function parsePeriodNumbers(period) {
+  if (!period || typeof period !== 'string') return [];
+  const normalized = period.replace(/[第节]/g, '').trim();
+  if (normalized.includes('-')) {
+    const parts = normalized.split('-').map(Number);
+    if (parts.length === 2 && Number.isInteger(parts[0]) && Number.isInteger(parts[1]) && parts[0] > 0 && parts[0] <= parts[1]) {
+      return Array.from({ length: parts[1] - parts[0] + 1 }, (_, i) => parts[0] + i);
+    }
+    return [];
+  }
+  if (normalized.includes(',')) {
+    // 升序排序：倒序/乱序输入（如 "3,1"）会让 DTSTART/DTEND 颠倒，生成非法 VEVENT
+    return normalized.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+  }
+  const n = Number(normalized);
+  return Number.isInteger(n) && n > 0 ? [n] : [];
+}
+
+function isCourseActiveInWeek(course, week, totalWeeks) {
+  if (!course || typeof course !== 'object') return false;
+  const start = Number.isInteger(course.startWeek) ? course.startWeek : 1;
+  const end = Number.isInteger(course.endWeek) ? course.endWeek : totalWeeks;
+  const weekType = course.weekType || 'all';
+  if (week < start || week > end) return false;
+  if (weekType === 'odd') return week % 2 === 1;
+  if (weekType === 'even') return week % 2 === 0;
+  return true;
+}
+
+const ICS_DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+const ICS_DAY_NAMES = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
+
+// 时段划分（按节次）：上午 1-5、下午 6-9、晚上 10-13
+const ICS_SLOT_LABELS = { morning: '上午', afternoon: '下午', evening: '晚上' };
+function slotOfFirstPeriod(firstPeriod) {
+  if (firstPeriod >= 1 && firstPeriod <= 5) return 'morning';
+  if (firstPeriod >= 6 && firstPeriod <= 9) return 'afternoon';
+  if (firstPeriod >= 10 && firstPeriod <= 13) return 'evening';
+  return null;
+}
+
+// 按 semesterStart + 周次范围把课程展开成本学期全部上课日的 VEVENT。
+// 节假日（holidays.js 内置表）当天的事件跳过。
+// 调休补课日（schedule.makeupDays）不走周次展开：confirmed 的补课日按 date 直接生成
+// 事件（DESCRIPTION 标注「补课」及 copyFrom），pending（等待学校通知）的跳过。
+function buildCalendarIcs(schedule) {
+  const totalWeeksNum = Number.isInteger(schedule.totalWeeks) ? schedule.totalWeeks : 16;
+  const periodSettings = Array.isArray(schedule.periodSettings) ? schedule.periodSettings : [];
+  const dtstamp = formatIcsUtcDateTime(new Date());
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//schedule-web//class-schedule//CN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    `X-WR-CALNAME:${escapeIcsText(schedule.name || '班级课表')}`,
+    'BEGIN:VTIMEZONE',
+    'TZID:Asia/Shanghai',
+    'BEGIN:STANDARD',
+    'TZOFFSETFROM:+0800',
+    'TZOFFSETTO:+0800',
+    'TZNAME:CST',
+    'DTSTART:19700101T000000',
+    'END:STANDARD',
+    'END:VTIMEZONE'
+  ];
+  // 事件先收集到 events，输出前按「天 × 时段」分组生成独立的时段汇总 VEVENT
+  const events = [];
+  for (let week = 1; week <= totalWeeksNum; week++) {
+    ICS_DAY_KEYS.forEach((day, dayIndex) => {
+      const courses = (schedule.courses && schedule.courses[day]) || [];
+      for (const course of courses) {
+        if (!isCourseActiveInWeek(course, week, totalWeeksNum)) continue;
+        if (Number.isInteger(course.skipWeek) && course.skipWeek === week) continue;
+        const periods = parsePeriodNumbers(course.period);
+        if (periods.length === 0) continue;
+        const first = periodSettings[periods[0] - 1];
+        const last = periodSettings[periods[periods.length - 1] - 1];
+        if (!first || !last) continue;
+        const [sh, sm] = first.startTime.split(':').map(Number);
+        const [eh, em] = last.startTime.split(':').map(Number);
+        const start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, sh, sm);
+        if (!start) continue;
+        const endBase = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, eh, em);
+        const end = new Date(endBase.getTime() + (Number(last.duration) || 45) * 60000);
+        const holiday = ScheduleHolidays.getHolidayInfo(start);
+        if (holiday && holiday.type === 'holiday') continue;
+        const uid = `sw-${crypto.createHash('sha1').update([
+          course.name, day, course.period, week, course.location || '', course.teacher || ''
+        ].join('|')).digest('hex').slice(0, 20)}@schedule-web`;
+        const desc = [];
+        if (course.teacher) desc.push(`教师：${course.teacher}`);
+        desc.push(`第${week}周 ${ICS_DAY_NAMES[day]} 第${course.period}节`);
+        const eventLines = ['BEGIN:VEVENT'];
+        eventLines.push(`UID:${uid}`);
+        eventLines.push(`DTSTAMP:${dtstamp}`);
+        eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(start)}`);
+        eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(end)}`);
+        eventLines.push(`SUMMARY:${escapeIcsText(course.name)}`);
+        if (course.location) eventLines.push(`LOCATION:${escapeIcsText(course.location)}`);
+        eventLines.push(`DESCRIPTION:${escapeIcsText(desc.join('\n'))}`);
+        eventLines.push('BEGIN:VALARM');
+        eventLines.push('ACTION:DISPLAY');
+        eventLines.push('TRIGGER:-PT15M');
+        eventLines.push(`DESCRIPTION:${escapeIcsText(course.name)}即将开始`);
+        eventLines.push('END:VALARM');
+        eventLines.push('END:VEVENT');
+        events.push({
+          dayKey: `w${week}-${day}`,
+          start: start.getTime(),
+          slot: slotOfFirstPeriod(periods[0]),
+          name: course.name,
+          descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
+          lines: eventLines
+        });
+      }
+    });
+  }
+  // 调休补课日：confirmed 按日期直接生成事件，pending 跳过
+  const makeupDays = Array.isArray(schedule.makeupDays) ? schedule.makeupDays : [];
+  for (const day of makeupDays) {
+    if (!day || day.status !== 'confirmed') continue;
+    const baseDate = ScheduleDateUtils.parseLocalDate(day.date);
+    if (!baseDate) continue;
+    const dayCourses = Array.isArray(day.courses) ? day.courses : [];
+    for (const course of dayCourses) {
+      const periods = parsePeriodNumbers(course.period);
+      if (periods.length === 0) continue;
+      const first = periodSettings[periods[0] - 1];
+      const last = periodSettings[periods[periods.length - 1] - 1];
+      if (!first || !last) continue;
+      const [sh, sm] = first.startTime.split(':').map(Number);
+      const [eh, em] = last.startTime.split(':').map(Number);
+      const start = new Date(baseDate.getTime());
+      start.setHours(sh, sm, 0, 0);
+      const end = new Date(baseDate.getTime());
+      end.setHours(eh, em, 0, 0);
+      end.setTime(end.getTime() + (Number(last.duration) || 45) * 60000);
+      // UID 稳定：由补课日期 + 课程信息哈希而成，同一补课日重复导出不变
+      const uid = `swm-${crypto.createHash('sha1').update([
+        day.date, course.name, course.period, course.location || '', course.teacher || ''
+      ].join('|')).digest('hex').slice(0, 20)}@schedule-web`;
+      const desc = [];
+      if (course.teacher) desc.push(`教师：${course.teacher}`);
+      desc.push(day.copyFrom ? `补课·补${ICS_DAY_NAMES[day.copyFrom]}` : '补课');
+      desc.push(`${day.date} 第${course.period}节`);
+      const eventLines = ['BEGIN:VEVENT'];
+      eventLines.push(`UID:${uid}`);
+      eventLines.push(`DTSTAMP:${dtstamp}`);
+      eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(start)}`);
+      eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(end)}`);
+      eventLines.push(`SUMMARY:${escapeIcsText(course.name)}`);
+      if (course.location) eventLines.push(`LOCATION:${escapeIcsText(course.location)}`);
+      eventLines.push(`DESCRIPTION:${escapeIcsText(desc.join('\n'))}`);
+      eventLines.push('BEGIN:VALARM');
+      eventLines.push('ACTION:DISPLAY');
+      eventLines.push('TRIGGER:-PT15M');
+      eventLines.push(`DESCRIPTION:${escapeIcsText(course.name)}即将开始`);
+      eventLines.push('END:VALARM');
+      eventLines.push('END:VEVENT');
+      events.push({
+        dayKey: `m-${day.date}`,
+        start: start.getTime(),
+        slot: slotOfFirstPeriod(periods[0]),
+        name: course.name,
+        descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
+        lines: eventLines
+      });
+    }
+  }
+  // 时段汇总提醒：按「天 × 时段」分组，每组有课的时段额外生成一个独立的汇总 VEVENT。
+  // 很多日历客户端（Google 日历等）一个 VEVENT 只认一条 VALARM，所以不能像课程事件那样
+  // 把汇总提醒作为第二条闹钟塞进首课事件，必须独立成事件；课程事件仍只有一条 -PT15M VALARM。
+  // 汇总事件 DTSTART = 该时段当天最早课的上课时间 - 60 分钟，DTEND = DTSTART + 5 分钟，
+  // 闹钟 TRIGGER:PT0M（事件开始时提醒）。
+  const slotGroups = new Map(); // `${dayKey}|${slot}` -> events[]
+  for (const ev of events) {
+    if (!ev.slot) continue;
+    const key = `${ev.dayKey}|${ev.slot}`;
+    if (!slotGroups.has(key)) slotGroups.set(key, []);
+    slotGroups.get(key).push(ev);
+  }
+  for (const [key, group] of slotGroups) {
+    group.sort((a, b) => a.start - b.start);
+    const slot = key.split('|').pop();
+    const label = ICS_SLOT_LABELS[slot];
+    const summaryStart = new Date(group[0].start - 60 * 60000);
+    const summaryEnd = new Date(summaryStart.getTime() + 5 * 60000);
+    const dateStr = formatIcsLocalDateTime(new Date(group[0].start)).slice(0, 8);
+    // UID 稳定：由日期 + 时段 + 课程名列表哈希而成，重复导出不变，且不与课程事件冲突
+    const uid = `sw-daily-${crypto.createHash('sha1').update(
+      [dateStr, slot, ...group.map(e => e.name)].join('|')
+    ).digest('hex').slice(0, 20)}@schedule-web`;
+    const eventLines = ['BEGIN:VEVENT'];
+    eventLines.push(`UID:${uid}`);
+    eventLines.push(`DTSTAMP:${dtstamp}`);
+    eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryStart)}`);
+    eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryEnd)}`);
+    eventLines.push(`SUMMARY:${escapeIcsText(`📋 ${label}课程预告`)}`);
+    eventLines.push(`DESCRIPTION:${escapeIcsText(group.map(e => e.descLine).join('\n'))}`);
+    eventLines.push('BEGIN:VALARM');
+    eventLines.push('ACTION:DISPLAY');
+    eventLines.push('TRIGGER:PT0M');
+    eventLines.push(`DESCRIPTION:${escapeIcsText(`今天${label}有 ${group.length} 节课`)}`);
+    eventLines.push('END:VALARM');
+    eventLines.push('END:VEVENT');
+    lines.push(...eventLines);
+  }
+  for (const ev of events) lines.push(...ev.lines);
+  lines.push('END:VCALENDAR');
+  return lines.map(foldIcsLine).join('\r\n') + '\r\n';
+}
+
+app.get('/api/calendar.ics', async (req, res) => {
+  try {
+    const schedule = await loadSchedule();
+    const ics = buildCalendarIcs(schedule);
+    await logToFile('ICS 日历导出');
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'inline; filename="schedule.ics"');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(ics);
+  } catch (err) {
+    console.error('导出 ICS 失败:', err);
+    res.status(500).json({ error: 'Failed to export calendar' });
   }
 });
 
@@ -854,8 +1229,30 @@ async function init() {
   await loadSchedule();
 }
 
+// ===== 公网只读入口 =====
+// 设置 READONLY_PORT 后，在同一进程内再起一个只读监听：
+// - 所有非 GET/HEAD/OPTIONS 的 /api 请求一律 403（写接口整体关闭）
+// - /api/ui-config 返回 readonly: true，前端据此隐藏登录/编辑入口
+// - 静态资源与只读 API（课表/公告/ICS）透传到主 app
+// 典型用法：tailnet 入口绑主端口（可编辑），公网 nginx 反代到只读端口。
+function createReadonlyApp() {
+  const readonlyApp = express();
+  readonlyApp.disable('x-powered-by');
+  readonlyApp.get('/api/ui-config', (req, res) => {
+    res.json({ readonly: true, icpNumber: ICP_NUMBER });
+  });
+  readonlyApp.use('/api', (req, res, next) => {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      return res.status(403).json({ error: 'Public endpoint is read-only' });
+    }
+    next();
+  });
+  readonlyApp.use(app);
+  return readonlyApp;
+}
+
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, createReadonlyApp, resolveReadonlyListenPort };
 
 if (require.main === module) {
   init().then(() => {
@@ -883,6 +1280,13 @@ ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密
       }
       logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
     });
+    const readonlyListenPort = resolveReadonlyListenPort(READONLY_PORT, PORT);
+    if (readonlyListenPort) {
+      createReadonlyApp().listen(readonlyListenPort, () => {
+        console.log(`🔒 公网只读入口已启动: http://localhost:${readonlyListenPort}（写接口关闭）`);
+        logToFile(`只读入口启动 - 端口: ${readonlyListenPort}`);
+      });
+    }
   }).catch(err => {
     console.error('服务启动失败:', err);
     process.exit(1);
