@@ -18,7 +18,7 @@ process.env.SEMESTER_START = '2026-08-31';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
-const { app, init, buildCalendarIcs, parsePeriodNumbers, foldIcsLine } = require('../src/server/server');
+const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine } = require('../src/server/server');
 
 const seedData = {
   name: 'ICS测试班',
@@ -226,52 +226,54 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     const events = parseEvents(ics);
     // 5 个课程事件 + 4 个汇总事件（周一上午、周一晚上、周二下午、周三下午）
     expect(events).toHaveLength(9);
-    const summaries = events.filter(e => e.includes('课程预告'));
+    const summaries = events.filter(e => e.includes('📋'));
     expect(summaries).toHaveLength(4);
-    expect(countOccurrences(ics, 'SUMMARY:📋 上午课程预告')).toBe(1);
-    expect(countOccurrences(ics, 'SUMMARY:📋 下午课程预告')).toBe(2);
-    expect(countOccurrences(ics, 'SUMMARY:📋 晚上课程预告')).toBe(1);
+    // SUMMARY 直接列出该时段全部课名（按上课时间排序、顿号分隔）
+    expect(countOccurrences(ics, 'SUMMARY:📋 上午：数据库原理、体育')).toBe(1);
+    expect(countOccurrences(ics, 'SUMMARY:📋 下午：周二下午课')).toBe(1);
+    expect(countOccurrences(ics, 'SUMMARY:📋 下午：周三下午课')).toBe(1);
+    expect(countOccurrences(ics, 'SUMMARY:📋 晚上：晚自习辅导')).toBe(1);
     // 周一无下午课，故没有「周一 + 下午」的汇总事件
     const mondaySummaries = summaries.filter(e => e.includes('DTSTART;TZID=Asia/Shanghai:20260831'));
     expect(mondaySummaries).toHaveLength(2);
-    for (const e of mondaySummaries) expect(e).not.toContain('下午课程预告');
+    for (const e of mondaySummaries) expect(e).not.toContain('📋 下午：');
   });
 
   it('汇总事件时间 = 该时段当天最早课的上课时间 -60 分钟，时长 5 分钟', () => {
     const events = parseEvents(buildCalendarIcs(slotSchedule));
     // 周一上午首课 08:00 → 汇总事件 07:00-07:05
-    const morning = events.find(e => e.includes('SUMMARY:📋 上午课程预告') && e.includes('DTSTART;TZID=Asia/Shanghai:20260831'));
+    const morning = events.find(e => e.includes('SUMMARY:📋 上午：数据库原理、体育') && e.includes('DTSTART;TZID=Asia/Shanghai:20260831'));
     expect(morning).toContain('DTSTART;TZID=Asia/Shanghai:20260831T070000');
     expect(morning).toContain('DTEND;TZID=Asia/Shanghai:20260831T070500');
     // 周一晚上首课 18:00 → 汇总事件 17:00-17:05
-    const evening = events.find(e => e.includes('SUMMARY:📋 晚上课程预告'));
+    const evening = events.find(e => e.includes('SUMMARY:📋 晚上：晚自习辅导'));
     expect(evening).toContain('DTSTART;TZID=Asia/Shanghai:20260831T170000');
     expect(evening).toContain('DTEND;TZID=Asia/Shanghai:20260831T170500');
   });
 
   it('汇总 DESCRIPTION 逐行列出该时段全部课程（含起止时间与地点）', () => {
     const events = parseEvents(buildCalendarIcs(slotSchedule));
-    const morning = events.find(e => e.includes('SUMMARY:📋 上午课程预告') && e.includes('20260831'));
+    const morning = events.find(e => e.includes('SUMMARY:📋 上午：数据库原理、体育') && e.includes('20260831'));
     expect(morning).toContain('DESCRIPTION:数据库原理 08:00-09:40 @教学楼D404\\n体育 09:50-11:30 @操场');
   });
 
-  it('汇总事件带一条 PT0M 闹钟，DESCRIPTION 含课程数', () => {
+  it('汇总事件带一条 PT0M 闹钟，VALARM 的 DESCRIPTION 与 SUMMARY 相同（含课名）', () => {
     const ics = buildCalendarIcs(slotSchedule);
     expect(countOccurrences(ics, 'TRIGGER:PT0M')).toBe(4);
     const events = parseEvents(ics);
-    const morning = events.find(e => e.includes('SUMMARY:📋 上午课程预告') && e.includes('20260831'));
+    const morning = events.find(e => e.includes('SUMMARY:📋 上午：数据库原理、体育') && e.includes('20260831'));
     expect(countOccurrences(morning, 'BEGIN:VALARM')).toBe(1);
     expect(morning).toContain('TRIGGER:PT0M');
-    expect(morning).toContain('DESCRIPTION:今天上午有 2 节课');
-    const evening = events.find(e => e.includes('SUMMARY:📋 晚上课程预告'));
-    expect(evening).toContain('DESCRIPTION:今天晚上有 1 节课');
+    expect(morning).toContain('DESCRIPTION:📋 上午：数据库原理、体育');
+    const evening = events.find(e => e.includes('SUMMARY:📋 晚上：晚自习辅导'));
+    expect(evening).toContain('DESCRIPTION:📋 晚上：晚自习辅导');
   });
 
   it('课程事件恢复为只有一条 -PT15M VALARM，不再出现 -PT60M', () => {
     const ics = buildCalendarIcs(slotSchedule);
     expect(ics).not.toContain('PT60M');
     const events = parseEvents(ics);
-    const courseEvents = events.filter(e => !e.includes('课程预告'));
+    const courseEvents = events.filter(e => !e.includes('📋'));
     expect(courseEvents).toHaveLength(5);
     for (const e of courseEvents) {
       expect(countOccurrences(e, 'BEGIN:VALARM')).toBe(1);
@@ -291,11 +293,11 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
 
   it('跨天互不影响：周二下午的汇总只含周二的课；无地点课程条目不带 @地点', () => {
     const events = parseEvents(buildCalendarIcs(slotSchedule));
-    const tuesday = events.find(e => e.includes('SUMMARY:📋 下午课程预告') && e.includes('DTSTART;TZID=Asia/Shanghai:20260901'));
+    const tuesday = events.find(e => e.includes('SUMMARY:📋 下午：周二下午课') && e.includes('DTSTART;TZID=Asia/Shanghai:20260901'));
     expect(tuesday).toContain('DTSTART;TZID=Asia/Shanghai:20260901T130000');
     expect(tuesday).toContain('DESCRIPTION:周二下午课 14:00-15:40 @教学楼B201');
     expect(tuesday).not.toContain('周三下午课');
-    const wednesday = events.find(e => e.includes('SUMMARY:📋 下午课程预告') && e.includes('DTSTART;TZID=Asia/Shanghai:20260902'));
+    const wednesday = events.find(e => e.includes('SUMMARY:📋 下午：周三下午课') && e.includes('DTSTART;TZID=Asia/Shanghai:20260902'));
     expect(wednesday).toContain('DESCRIPTION:周三下午课 14:00-14:45');
     expect(wednesday).not.toContain(' @');
   });
@@ -313,18 +315,65 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     });
     const events = parseEvents(ics);
     // 汇总事件总数 = 4（周次展开）+ 1（补课日上午）
-    expect(events.filter(e => e.includes('课程预告'))).toHaveLength(5);
-    const makeupSummary = events.find(e => e.includes('SUMMARY:📋 上午课程预告') && e.includes('DTSTART;TZID=Asia/Shanghai:20260920'));
+    expect(events.filter(e => e.includes('📋'))).toHaveLength(5);
+    // 补课日的汇总事件标题同样直接列课名
+    const makeupSummary = events.find(e => e.includes('SUMMARY:📋 上午：补课A、补课B') && e.includes('DTSTART;TZID=Asia/Shanghai:20260920'));
     expect(makeupSummary).toContain('DTSTART;TZID=Asia/Shanghai:20260920T070000');
     expect(makeupSummary).toContain('DTEND;TZID=Asia/Shanghai:20260920T070500');
     expect(makeupSummary).toContain('DESCRIPTION:补课A 08:00-09:40 @教学楼D404\\n补课B 09:50-10:35 @教学楼D405');
     expect(makeupSummary).toContain('TRIGGER:PT0M');
+    expect(makeupSummary).toContain('DESCRIPTION:📋 上午：补课A、补课B');
     // 补课课程事件本身仍只有一条 -PT15M VALARM
     for (const name of ['SUMMARY:补课A', 'SUMMARY:补课B']) {
       const ev = events.find(e => e.includes(name));
       expect(countOccurrences(ev, 'BEGIN:VALARM')).toBe(1);
       expect(ev).toContain('TRIGGER:-PT15M');
     }
+  });
+
+  it('同名课程同一时段出现多次时 SUMMARY 只列一次', () => {
+    const ics = buildCalendarIcs({
+      ...slotSchedule,
+      courses: {
+        monday: [
+          { name: '高等数学', period: '1-2', location: '教学楼A101' },
+          { name: '高等数学', period: '3-4', location: '教学楼A102' },
+          { name: '体育', period: '5', location: '操场' }
+        ],
+        tuesday: [], wednesday: [], thursday: [], friday: []
+      }
+    });
+    const events = parseEvents(ics);
+    const morning = events.find(e => e.includes('SUMMARY:📋 上午') && e.includes('20260831'));
+    expect(morning).toContain('SUMMARY:📋 上午：高等数学、体育');
+    // DESCRIPTION 仍逐行列出每一次上课（不去重）
+    expect(morning).toContain('DESCRIPTION:高等数学 08:00-09:40 @教学楼A101\\n高等数学 09:50-11:30 @教学楼A102\\n体育 11:40-12:25 @操场');
+  });
+
+  it('SUMMARY 超过 60 字符时保留完整课名并以「等N节」截断，截断后仍按 foldIcsLine 折叠（≤75 octet）', () => {
+    const names = ['课程名称甲', '课程名称乙', '课程名称丙', '课程名称丁', '课程名称戊',
+      '课程名称己', '课程名称庚', '课程名称辛', '课程名称壬', '课程名称癸'];
+    const ics = buildCalendarIcs({
+      ...slotSchedule,
+      courses: {
+        monday: names.map((name, i) => ({ name, period: String((i >> 1) + 1) })),
+        tuesday: [], wednesday: [], thursday: [], friday: []
+      }
+    });
+    const truncated = `📋 上午：${names.slice(0, 8).join('、')}等2节`;
+    expect(truncated.length).toBeLessThanOrEqual(60);
+    for (const line of ics.split('\r\n')) {
+      expect(Buffer.byteLength(line, 'utf8')).toBeLessThanOrEqual(75);
+    }
+    const unfolded = ics.replace(/\r\n /g, '');
+    const events = parseEvents(unfolded);
+    const morning = events.find(e => e.includes('SUMMARY:📋 上午') && e.includes('20260831'));
+    expect(morning).toContain(`SUMMARY:${truncated}\r\n`);
+    // 被截掉的课名不出现在标题里，但 DESCRIPTION 逐行列表仍然完整
+    expect(morning).toContain('课程名称壬 11:40-12:25');
+    expect(morning).toContain('课程名称癸 11:40-12:25');
+    // VALARM 的 DESCRIPTION 与截断后的 SUMMARY 同步
+    expect(morning).toContain(`DESCRIPTION:${truncated}`);
   });
 
   it('汇总 DESCRIPTION 同样经过 foldIcsLine 折叠（所有物理行 ≤75 octet）', () => {
@@ -344,6 +393,36 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     const unfolded = ics.replace(/\r\n /g, '');
     expect(unfolded).toContain(`DESCRIPTION:${'超长的中文课程名称'.repeat(8)} 08:00-09:40 @${'教学楼机房'.repeat(6)}\\n${'另一门超长课程名字'.repeat(8)} 09:50-11:30 @${'教学楼'.repeat(6)}`);
     expect(countOccurrences(unfolded, 'TRIGGER:PT0M')).toBe(1);
+  });
+});
+
+describe('buildSlotSummaryTitle（汇总事件标题）', () => {
+  it('时段名 + 顿号分隔的课名列表', () => {
+    expect(buildSlotSummaryTitle('上午', ['高等数学', '体育理论'])).toBe('📋 上午：高等数学、体育理论');
+    expect(buildSlotSummaryTitle('晚上', ['晚自习辅导'])).toBe('📋 晚上：晚自习辅导');
+  });
+
+  it('不超过 60 字符时原样返回', () => {
+    const names = ['课程名称甲', '课程名称乙', '课程名称丙'];
+    const title = buildSlotSummaryTitle('下午', names);
+    expect(title).toBe(`📋 下午：${names.join('、')}`);
+    expect(title.length).toBeLessThanOrEqual(60);
+  });
+
+  it('超过 60 字符时保留前若干门完整课名，尾部加「等N节」', () => {
+    const names = ['课程名称甲', '课程名称乙', '课程名称丙', '课程名称丁', '课程名称戊',
+      '课程名称己', '课程名称庚', '课程名称辛', '课程名称壬', '课程名称癸'];
+    const title = buildSlotSummaryTitle('上午', names);
+    expect(title).toBe(`📋 上午：${names.slice(0, 8).join('、')}等2节`);
+    expect(title.length).toBeLessThanOrEqual(60);
+    // 保留的均为完整课名，不出现半截课名
+    expect(title).not.toContain('壬');
+  });
+
+  it('课名本身超长时允许一门都列不下，只留「等N节」', () => {
+    const title = buildSlotSummaryTitle('上午', ['超长的中文课程名称'.repeat(8)]);
+    expect(title).toBe('📋 上午：等1节');
+    expect(title.length).toBeLessThanOrEqual(60);
   });
 });
 

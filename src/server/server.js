@@ -842,6 +842,27 @@ function slotOfFirstPeriod(firstPeriod) {
   return null;
 }
 
+// 汇总事件标题：「📋 上午：高等数学、体育理论」——时段名 + 该时段全部课程名
+// （按上课时间排序、顿号分隔、同名去重）。日历 App 的推送通知只显示 SUMMARY，
+// 所以课名必须直接进标题。整串超过 60 字符时保留前若干门完整课名，
+// 尾部以「等N节」截断（N 为未列出的课程门数）。
+const ICS_SUMMARY_TITLE_MAX = 60;
+function buildSlotSummaryTitle(label, names) {
+  const prefix = `📋 ${label}：`;
+  const full = prefix + names.join('、');
+  if (full.length <= ICS_SUMMARY_TITLE_MAX) return full;
+  let keptCount = 0;
+  let keptLen = 0;
+  for (let i = 0; i < names.length; i++) {
+    const addLen = names[i].length + (keptCount > 0 ? 1 : 0); // 课名 + 顿号
+    const suffix = `等${names.length - i - 1}节`;
+    if (prefix.length + keptLen + addLen + suffix.length > ICS_SUMMARY_TITLE_MAX) break;
+    keptLen += addLen;
+    keptCount++;
+  }
+  return prefix + names.slice(0, keptCount).join('、') + `等${names.length - keptCount}节`;
+}
+
 // 按 semesterStart + 周次范围把课程展开成本学期全部上课日的 VEVENT。
 // 节假日（holidays.js 内置表）当天的事件跳过。
 // 调休补课日（schedule.makeupDays）不走周次展开：confirmed 的补课日按 date 直接生成
@@ -994,17 +1015,24 @@ function buildCalendarIcs(schedule) {
     const uid = `sw-daily-${crypto.createHash('sha1').update(
       [dateStr, slot, ...group.map(e => e.name)].join('|')
     ).digest('hex').slice(0, 20)}@schedule-web`;
+    // 标题直接列课名（按上课时间排序、顿号分隔、同名去重），超长时以「等N节」截断
+    const names = [];
+    for (const e of group) {
+      if (!names.includes(e.name)) names.push(e.name);
+    }
+    const title = buildSlotSummaryTitle(label, names);
     const eventLines = ['BEGIN:VEVENT'];
     eventLines.push(`UID:${uid}`);
     eventLines.push(`DTSTAMP:${dtstamp}`);
     eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryStart)}`);
     eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryEnd)}`);
-    eventLines.push(`SUMMARY:${escapeIcsText(`📋 ${label}课程预告`)}`);
+    eventLines.push(`SUMMARY:${escapeIcsText(title)}`);
     eventLines.push(`DESCRIPTION:${escapeIcsText(group.map(e => e.descLine).join('\n'))}`);
     eventLines.push('BEGIN:VALARM');
     eventLines.push('ACTION:DISPLAY');
     eventLines.push('TRIGGER:PT0M');
-    eventLines.push(`DESCRIPTION:${escapeIcsText(`今天${label}有 ${group.length} 节课`)}`);
+    // 推送通知只展示标题，VALARM 的 DESCRIPTION 与 SUMMARY 保持同一串带课名文本
+    eventLines.push(`DESCRIPTION:${escapeIcsText(title)}`);
     eventLines.push('END:VALARM');
     eventLines.push('END:VEVENT');
     lines.push(...eventLines);
@@ -1252,7 +1280,7 @@ function createReadonlyApp() {
 }
 
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, createReadonlyApp, resolveReadonlyListenPort };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, createReadonlyApp, resolveReadonlyListenPort };
 
 if (require.main === module) {
   init().then(() => {
