@@ -461,7 +461,9 @@ describe('Schedule API', () => {
         .send(payload)
         .expect(400);
 
-      expect(res.body.error).toBe('Invalid totalPeriods');
+      // 严格节次解析：超出 20 节上限整体拒绝（isValidCourse 阶段），
+      // 关键是不展开超大范围抛 RangeError 变 500
+      expect(res.body.error).toBe('Invalid courses structure');
     });
 
     it.each([

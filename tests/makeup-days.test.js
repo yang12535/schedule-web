@@ -22,6 +22,7 @@ process.env.SEMESTER_START = '2026-08-31';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
+const crypto = require('crypto');
 const { app, init, buildCalendarIcs, createDefaultSchedule, isValidMakeupDays, createReadonlyApp } = require('../src/server/server');
 const MakeupDays = require('../src/public/js/makeup-days');
 
@@ -157,6 +158,24 @@ describe('调休补课日', () => {
         .expect(400);
     });
 
+    it('补课课程节次超出 periodSettings 节次数时应返回 400（默认 12 节）', async () => {
+      const mk = period => [{
+        id: `mk-range-${period}`, date: '2026-09-22', name: '', status: 'confirmed', copyFrom: null,
+        courses: [{ name: '虚构航模制作', period }]
+      }];
+      // 可解析但超出 12 节：保存时拒绝，避免 ICS 导出静默跳过
+      const res = await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({ password: 'test123', makeupDays: mk('1-13') })
+        .expect(400);
+      expect(res.body.error).toBe('Course period exceeds totalPeriods');
+      // 边界内（第 12 节）正常保存
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({ password: 'test123', makeupDays: mk('11-12') })
+        .expect(200);
+    });
+
     it('只读入口写接口一律 403', async () => {
       const readonlyApp = createReadonlyApp();
       await request(readonlyApp)
@@ -224,6 +243,27 @@ describe('调休补课日', () => {
       for (const uid of uids(first)) {
         expect(uid).toMatch(/^UID:swm-[0-9a-f]{20}@schedule-web$/);
       }
+    });
+
+    it('同一补课日两条字段全同的课程得到不同 UID，无冲突时与旧算法一致', () => {
+      const course = { name: '虚构风筝制作', period: '1', teacher: '测试教师寅', location: '虚拟场Y001' };
+      const day = {
+        id: 'mk-collision', date: '2026-09-20', name: '虚构调休日', status: 'confirmed', copyFrom: null,
+        courses: [{ ...course, id: '虚构-mk-1' }, { ...course, id: '虚构-mk-2' }]
+      };
+      const ics = buildCalendarIcs({ ...baseSchedule, makeupDays: [day] });
+      const uids = ics.split('\r\n').filter(l => l.startsWith('UID:swm-'));
+      expect(uids).toHaveLength(2);
+      expect(new Set(uids).size).toBe(2);
+      // 旧算法 UID：date|name|period|location|teacher 的 sha1 前 20 位；第一条保持一致
+      const legacy = `UID:swm-${crypto.createHash('sha1').update([
+        day.date, course.name, course.period, course.location, course.teacher
+      ].join('|')).digest('hex').slice(0, 20)}@schedule-web`;
+      expect(uids[0]).toBe(legacy);
+      expect(uids[1]).toBe(legacy.replace('@schedule-web', '-2@schedule-web'));
+      // 单课程无冲突：UID 与旧算法逐字节一致（存量订阅不受影响）
+      const single = buildCalendarIcs({ ...baseSchedule, makeupDays: [{ ...day, courses: [{ ...course, id: '虚构-mk-1' }] }] });
+      expect(single.split('\r\n').filter(l => l.startsWith('UID:swm-'))).toEqual([legacy]);
     });
 
     it('导出的 ICS 所有物理行仍不超过 75 octet', () => {

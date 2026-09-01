@@ -164,25 +164,11 @@ function getCustomCourseTimes(course) {
   return { startMin, endMin };
 }
 
+// 与 ICS 导出共用同一份严格解析结果：parsePeriodNumbers 无法解析的节次此处返回 0，
+// 保证「能存进去的课一定能被 ICS 展开」，不会出现校验放行但导出静默跳过
 function getMaxPeriodNumber(period) {
-  if (!period || typeof period !== 'string') return 0;
-  const normalized = period.replace(/[第节]/g, '').trim();
-  if (normalized.includes('-')) {
-    const parts = normalized.split('-').map(part => part.trim());
-    if (parts.length === 2) {
-      const start = parsePositivePeriodNumber(parts[0]);
-      const end = parsePositivePeriodNumber(parts[1]);
-      if (start > 0 && end > 0 && start <= end) return end;
-    }
-    return 0;
-  }
-  if (normalized.includes(',')) {
-    return normalized.split(',').reduce((max, part) => {
-      const number = parsePositivePeriodNumber(part.trim());
-      return number > max ? number : max;
-    }, 0);
-  }
-  return parsePositivePeriodNumber(normalized);
+  const nums = parsePeriodNumbers(period);
+  return nums.length ? nums[nums.length - 1] : 0;
 }
 
 function getMaxCoursePeriod(courses) {
@@ -567,6 +553,18 @@ app.put('/api/schedule/makeup-days', strictRateLimit, async (req, res) => {
 
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
+      // 节次可解析还不够：超出 periodSettings 节次数的补课课程在 ICS 导出时
+      // 会因查不到对应节次配置被静默跳过，保存时直接拒绝
+      const totalPeriodsNum = Number.isInteger(schedule.totalPeriods)
+        ? schedule.totalPeriods
+        : (Array.isArray(schedule.periodSettings) ? schedule.periodSettings.length : 0);
+      for (const day of makeupDays) {
+        for (const course of day.courses) {
+          if (getMaxPeriodNumber(course.period) > totalPeriodsNum) {
+            throw new HttpError(400, 'Course period exceeds totalPeriods');
+          }
+        }
+      }
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       newSchedule.makeupDays = makeupDays;
       newSchedule.updatedAt = new Date().toISOString();
@@ -575,6 +573,9 @@ app.put('/api/schedule/makeup-days', strictRateLimit, async (req, res) => {
     await logToFile(`调休补课日已更新`);
     res.json({success:true});
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({error: err.message});
+    }
     console.error('保存调休补课日失败:', err);
     res.status(500).json({error:'Failed to save'});
   }
@@ -838,22 +839,28 @@ function foldIcsLine(line) {
 }
 
 // 与前端 parsePeriods 行为一致：支持 "1-2"、"1,3"、"3"、"第1-2节"
+// 严格解析：逗号列表任一 token 非正整数或为空段（如 "1,,2"）、范围颠倒、
+// 超过 20 节上限都整体返回 []。上限同时防止 "1-999999999999999999" 这类输入
+// 展开成巨长数组抛 RangeError。
+const MAX_PERIOD_NUMBER = 20;
 function parsePeriodNumbers(period) {
   if (!period || typeof period !== 'string') return [];
   const normalized = period.replace(/[第节]/g, '').trim();
   if (normalized.includes('-')) {
-    const parts = normalized.split('-').map(Number);
-    if (parts.length === 2 && Number.isInteger(parts[0]) && Number.isInteger(parts[1]) && parts[0] > 0 && parts[0] <= parts[1]) {
+    const parts = normalized.split('-').map(part => parsePositivePeriodNumber(part.trim()));
+    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0 && parts[0] <= parts[1] && parts[1] <= MAX_PERIOD_NUMBER) {
       return Array.from({ length: parts[1] - parts[0] + 1 }, (_, i) => parts[0] + i);
     }
     return [];
   }
   if (normalized.includes(',')) {
+    const nums = normalized.split(',').map(part => parsePositivePeriodNumber(part.trim()));
+    if (nums.some(n => n === 0 || n > MAX_PERIOD_NUMBER)) return [];
     // 升序排序：倒序/乱序输入（如 "3,1"）会让 DTSTART/DTEND 颠倒，生成非法 VEVENT
-    return normalized.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+    return nums.sort((a, b) => a - b);
   }
-  const n = Number(normalized);
-  return Number.isInteger(n) && n > 0 ? [n] : [];
+  const n = parsePositivePeriodNumber(normalized);
+  return n > 0 && n <= MAX_PERIOD_NUMBER ? [n] : [];
 }
 
 function isCourseActiveInWeek(course, week, totalWeeks) {
@@ -944,6 +951,15 @@ function buildCalendarIcs(schedule) {
   ];
   // 事件先收集到 events，输出前按「天 × 时段」分组生成独立的时段汇总 VEVENT
   const events = [];
+  // UID 冲突去重：课程/补课事件 UID 由内容哈希生成，两条字段全同的课会撞车互相覆盖。
+  // 仅对同一导出内发生冲突的事件追加稳定序号（-2、-3…，按展开顺序，确定性）；
+  // 无冲突时 UID 与旧算法逐字节一致，存量日历订阅不受影响。
+  const uidUseCount = new Map();
+  const assignUniqueUid = base => {
+    const n = uidUseCount.get(base) || 0;
+    uidUseCount.set(base, n + 1);
+    return n === 0 ? base : base.replace('@schedule-web', `-${n + 1}@schedule-web`);
+  };
   for (let week = 1; week <= totalWeeksNum; week++) {
     ICS_DAY_KEYS.forEach((day, dayIndex) => {
       const courses = (schedule.courses && schedule.courses[day]) || [];
@@ -972,9 +988,9 @@ function buildCalendarIcs(schedule) {
         }
         const holiday = ScheduleHolidays.getHolidayInfo(start);
         if (holiday && holiday.type === 'holiday') continue;
-        const uid = `sw-${crypto.createHash('sha1').update([
+        const uid = assignUniqueUid(`sw-${crypto.createHash('sha1').update([
           course.name, day, course.period, week, course.location || '', course.teacher || ''
-        ].join('|')).digest('hex').slice(0, 20)}@schedule-web`;
+        ].join('|')).digest('hex').slice(0, 20)}@schedule-web`);
         const desc = [];
         if (course.teacher) desc.push(`教师：${course.teacher}`);
         desc.push(`第${week}周 ${ICS_DAY_NAMES[day]} 第${course.period}节`);
@@ -1027,10 +1043,11 @@ function buildCalendarIcs(schedule) {
         end.setHours(eh, em, 0, 0);
         end.setTime(end.getTime() + (Number(last.duration) || 45) * 60000);
       }
-      // UID 稳定：由补课日期 + 课程信息哈希而成，同一补课日重复导出不变
-      const uid = `swm-${crypto.createHash('sha1').update([
+      // UID 稳定：由补课日期 + 课程信息哈希而成，同一补课日重复导出不变；
+      // 同一导出内撞车时由 assignUniqueUid 追加序号，无冲突时与旧算法一致
+      const uid = assignUniqueUid(`swm-${crypto.createHash('sha1').update([
         day.date, course.name, course.period, course.location || '', course.teacher || ''
-      ].join('|')).digest('hex').slice(0, 20)}@schedule-web`;
+      ].join('|')).digest('hex').slice(0, 20)}@schedule-web`);
       const desc = [];
       if (course.teacher) desc.push(`教师：${course.teacher}`);
       desc.push(day.copyFrom ? `补课·补${ICS_DAY_NAMES[day.copyFrom]}` : '补课');

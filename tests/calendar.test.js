@@ -18,6 +18,7 @@ process.env.SEMESTER_START = '2026-08-31';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
+const crypto = require('crypto');
 const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, slotOfFirstPeriod, slotOfActualStartMinutes } = require('../src/server/server');
 
 const seedData = {
@@ -133,6 +134,67 @@ describe('parsePeriodNumbers', () => {
     expect(parsePeriodNumbers(null)).toEqual([]);
     expect(parsePeriodNumbers('3-1')).toEqual([]);
     expect(parsePeriodNumbers('abc')).toEqual([]);
+  });
+
+  it('严格解析：逗号列表任一 token 非正整数或空段则整体拒绝', () => {
+    expect(parsePeriodNumbers('1,,2')).toEqual([]); // 空段
+    expect(parsePeriodNumbers('1,abc')).toEqual([]); // 非数字 token
+    expect(parsePeriodNumbers('1,0')).toEqual([]); // 非正整数
+    expect(parsePeriodNumbers('1,2.5')).toEqual([]); // 非整数
+    expect(parsePeriodNumbers(',1')).toEqual([]); // 前导空段
+  });
+
+  it('严格解析：超过 20 节上限整体拒绝，且不展开超大范围', () => {
+    expect(parsePeriodNumbers('21')).toEqual([]);
+    expect(parsePeriodNumbers('1-21')).toEqual([]);
+    expect(parsePeriodNumbers('18,21')).toEqual([]);
+    // 不得抛 RangeError（Array.from 超大 length），调用方不会因此 500
+    expect(() => parsePeriodNumbers('1-999999999999999999')).not.toThrow();
+    expect(parsePeriodNumbers('1-999999999999999999')).toEqual([]);
+  });
+});
+
+describe('课程事件 UID 冲突去重', () => {
+  // 只取课程事件 UID（排除 sw-daily 汇总事件与 swm 补课事件）
+  const swUids = ics => ics.split('\r\n')
+    .filter(l => l.startsWith('UID:sw-') && !l.startsWith('UID:sw-daily-') && !l.startsWith('UID:swm-'));
+
+  const collisionSchedule = courses => ({
+    name: 'UID冲突测试班',
+    semesterStart: '2026-08-31',
+    totalPeriods: 2,
+    totalWeeks: 1,
+    periodSettings: [
+      { startTime: '08:00', duration: 45 },
+      { startTime: '08:55', duration: 45 }
+    ],
+    courses: { monday: courses, tuesday: [], wednesday: [], thursday: [], friday: [] },
+    announcements: []
+  });
+
+  // 旧算法 UID：名称|day|period|week|location|teacher 的 sha1 前 20 位
+  const legacyUid = (course, day, week) => `UID:sw-${crypto.createHash('sha1').update([
+    course.name, day, course.period, week, course.location || '', course.teacher || ''
+  ].join('|')).digest('hex').slice(0, 20)}@schedule-web`;
+
+  it('两条字段全同的课程得到不同 UID，且重复导出稳定', () => {
+    const a = { id: '虚构-id-1', name: '虚构插花艺术', period: '1-2', teacher: '测试教师子', location: '虚拟馆X001' };
+    const b = { ...a, id: '虚构-id-2' };
+    const ics = buildCalendarIcs(collisionSchedule([a, b]));
+    const uids = swUids(ics);
+    expect(uids).toHaveLength(2);
+    expect(new Set(uids).size).toBe(2);
+    // 第一条保持旧算法 UID，第二条追加稳定序号
+    expect(uids[0]).toBe(legacyUid(a, 'monday', 1));
+    expect(uids[1]).toBe(legacyUid(a, 'monday', 1).replace('@schedule-web', '-2@schedule-web'));
+    // 重复导出 UID 集合不变
+    expect(swUids(buildCalendarIcs(collisionSchedule([a, b])))).toEqual(uids);
+  });
+
+  it('无冲突时单课程 UID 与旧算法完全一致（存量订阅不受影响）', () => {
+    const course = { id: '虚构-id-3', name: '虚构木工基础', period: '1-2', teacher: '测试教师丑', location: '虚拟馆X002' };
+    const ics = buildCalendarIcs(collisionSchedule([course]));
+    expect(swUids(ics)).toEqual([legacyUid(course, 'monday', 1)]);
   });
 });
 
