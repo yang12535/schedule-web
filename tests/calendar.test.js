@@ -84,7 +84,7 @@ describe('GET /api/calendar.ics', () => {
     expect(res.text).toContain('DTEND;TZID=Asia/Shanghai:20260831T094000');
     expect(res.text).not.toContain('20261005T080000'); // 国庆假期内的周一
     expect(res.text).toContain('LOCATION:教学楼A101');
-    expect(res.text).toContain('TRIGGER:-PT15M');
+    expect(res.text).toContain('TRIGGER:-PT30M'); // 当天首节课（或间隙 ≥30 分钟）课前 30 分钟提醒
     expect(res.text).toContain('TZID:Asia/Shanghai');
   });
 
@@ -269,16 +269,32 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     expect(evening).toContain('DESCRIPTION:📋 晚上：晚自习辅导');
   });
 
-  it('课程事件恢复为只有一条 -PT15M VALARM，不再出现 -PT60M', () => {
+  it('课程事件只有一条自适应 VALARM：首节/长间隙 -PT30M，短课间前课下课时触发，不再出现 -PT15M', () => {
     const ics = buildCalendarIcs(slotSchedule);
+    expect(ics).not.toContain('PT15M');
     expect(ics).not.toContain('PT60M');
     const events = parseEvents(ics);
     const courseEvents = events.filter(e => !e.includes('📋'));
     expect(courseEvents).toHaveLength(5);
     for (const e of courseEvents) {
       expect(countOccurrences(e, 'BEGIN:VALARM')).toBe(1);
-      expect(e).toContain('TRIGGER:-PT15M');
     }
+    // 周一数据库原理 08:00-09:40 为当天首节 → -PT30M，文案「30 分钟后开始」
+    const db = courseEvents.find(e => e.includes('SUMMARY:数据库原理'));
+    expect(db).toContain('TRIGGER:-PT30M');
+    expect(db).toContain('DESCRIPTION:数据库原理 30 分钟后开始');
+    // 周一体育 09:50 上课，前课 09:40 下课，间隙 10 分钟 → -PT10M，文案为下课触发
+    const pe = courseEvents.find(e => e.includes('SUMMARY:体育'));
+    expect(pe).toContain('TRIGGER:-PT10M');
+    expect(pe).toContain('DESCRIPTION:上一节已下课，接下来：体育');
+    // 周一晚自习 18:00，距前课 11:30 下课远超 30 分钟 → -PT30M
+    const evening = courseEvents.find(e => e.includes('SUMMARY:晚自习辅导'));
+    expect(evening).toContain('TRIGGER:-PT30M');
+    // 跨天互不影响：周二/周三下午各自只有一节课，均为当天首节 → -PT30M
+    const tue = courseEvents.find(e => e.includes('SUMMARY:周二下午课'));
+    expect(tue).toContain('TRIGGER:-PT30M');
+    const wed = courseEvents.find(e => e.includes('SUMMARY:周三下午课'));
+    expect(wed).toContain('TRIGGER:-PT30M');
   });
 
   it('汇总事件 UID 稳定（重复导出不变）且不与课程事件冲突', () => {
@@ -323,12 +339,15 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     expect(makeupSummary).toContain('DESCRIPTION:补课A 08:00-09:40 @教学楼D404\\n补课B 09:50-10:35 @教学楼D405');
     expect(makeupSummary).toContain('TRIGGER:PT0M');
     expect(makeupSummary).toContain('DESCRIPTION:📋 上午：补课A、补课B');
-    // 补课课程事件本身仍只有一条 -PT15M VALARM
-    for (const name of ['SUMMARY:补课A', 'SUMMARY:补课B']) {
-      const ev = events.find(e => e.includes(name));
-      expect(countOccurrences(ev, 'BEGIN:VALARM')).toBe(1);
-      expect(ev).toContain('TRIGGER:-PT15M');
-    }
+    // 补课课程事件同样按课间隙自适应：补课A 为当天首节 → -PT30M；
+    // 补课B 09:50 上课，前课 09:40 下课，间隙 10 分钟 → -PT10M 下课即提醒
+    const makeupA = events.find(e => e.includes('SUMMARY:补课A'));
+    expect(countOccurrences(makeupA, 'BEGIN:VALARM')).toBe(1);
+    expect(makeupA).toContain('TRIGGER:-PT30M');
+    const makeupB = events.find(e => e.includes('SUMMARY:补课B'));
+    expect(countOccurrences(makeupB, 'BEGIN:VALARM')).toBe(1);
+    expect(makeupB).toContain('TRIGGER:-PT10M');
+    expect(makeupB).toContain('DESCRIPTION:上一节已下课，接下来：补课B');
   });
 
   it('同名课程同一时段出现多次时 SUMMARY 只列一次', () => {
@@ -393,6 +412,108 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     const unfolded = ics.replace(/\r\n /g, '');
     expect(unfolded).toContain(`DESCRIPTION:${'超长的中文课程名称'.repeat(8)} 08:00-09:40 @${'教学楼机房'.repeat(6)}\\n${'另一门超长课程名字'.repeat(8)} 09:50-11:30 @${'教学楼'.repeat(6)}`);
     expect(countOccurrences(unfolded, 'TRIGGER:PT0M')).toBe(1);
+  });
+});
+
+describe('buildCalendarIcs 单课提醒按课间隙自适应', () => {
+  // 复刻用户实例：1 节 09:00-09:25、2 节 09:45-10:30（间隙 20）、
+  // 3 节 19:00-19:25、4 节 19:35-20:20（间隙 10）、5 节 21:00-21:45（距前课 40 分钟）
+  const gapPeriodSettings = [
+    { startTime: '09:00', duration: 25 },
+    { startTime: '09:45', duration: 45 },
+    { startTime: '19:00', duration: 25 },
+    { startTime: '19:35', duration: 45 },
+    { startTime: '21:00', duration: 45 }
+  ];
+  const gapSchedule = {
+    name: '间隙班',
+    semesterStart: '2026-08-31', // 周一
+    totalWeeks: 1,
+    periodSettings: gapPeriodSettings,
+    courses: {
+      monday: [
+        { name: '早课', period: '1' },
+        { name: '间隙20课', period: '2' },
+        { name: '晚课甲', period: '3' },
+        { name: '间隙10课', period: '4' },
+        { name: '长间隙课', period: '5' }
+      ],
+      tuesday: [{ name: '周二独课', period: '1' }],
+      wednesday: [], thursday: [], friday: []
+    }
+  };
+
+  function parseEvents(ics) {
+    const unfolded = ics.replace(/\r\n /g, '');
+    return unfolded.split('BEGIN:VEVENT').slice(1).map(block => block.split('END:VEVENT')[0]);
+  }
+
+  it('间隙 <30 分钟时在前课下课时刻提醒（TRIGGER = 负的间隙分钟数）', () => {
+    const events = parseEvents(buildCalendarIcs(gapSchedule));
+    // 09:25 下课 09:45 上课，间隙 20 → -PT20M
+    const gap20 = events.find(e => e.includes('SUMMARY:间隙20课'));
+    expect(gap20).toContain('TRIGGER:-PT20M');
+    expect(gap20).toContain('DESCRIPTION:上一节已下课，接下来：间隙20课');
+    // 19:25 下课 19:35 上课，间隙 10 → -PT10M
+    const gap10 = events.find(e => e.includes('SUMMARY:间隙10课'));
+    expect(gap10).toContain('TRIGGER:-PT10M');
+    expect(gap10).toContain('DESCRIPTION:上一节已下课，接下来：间隙10课');
+  });
+
+  it('间隙 ≥30 分钟或当天首节时课前 30 分钟提醒（-PT30M）', () => {
+    const events = parseEvents(buildCalendarIcs(gapSchedule));
+    // 早课 09:00 为周一首节 → -PT30M
+    const first = events.find(e => e.includes('SUMMARY:早课'));
+    expect(first).toContain('TRIGGER:-PT30M');
+    expect(first).toContain('DESCRIPTION:早课 30 分钟后开始');
+    // 晚课甲 19:00，距前课 10:30 下课远超 30 分钟 → -PT30M
+    const evening = events.find(e => e.includes('SUMMARY:晚课甲'));
+    expect(evening).toContain('TRIGGER:-PT30M');
+    expect(evening).toContain('DESCRIPTION:晚课甲 30 分钟后开始');
+    // 长间隙课 21:00，前课 20:20 下课，间隙 40 ≥ 30 → -PT30M
+    const long = events.find(e => e.includes('SUMMARY:长间隙课'));
+    expect(long).toContain('TRIGGER:-PT30M');
+    expect(long).toContain('DESCRIPTION:长间隙课 30 分钟后开始');
+  });
+
+  it('跨天不影响：他日课程不参与间隙计算，周二独课为当天首节 → -PT30M', () => {
+    const events = parseEvents(buildCalendarIcs(gapSchedule));
+    const tue = events.find(e => e.includes('SUMMARY:周二独课'));
+    expect(tue).toContain('DTSTART;TZID=Asia/Shanghai:20260901T090000');
+    expect(tue).toContain('TRIGGER:-PT30M');
+    expect(tue).toContain('DESCRIPTION:周二独课 30 分钟后开始');
+  });
+
+  it('叠课（gap≤0）兜底为 -PT0M', () => {
+    const events = parseEvents(buildCalendarIcs({
+      ...gapSchedule,
+      courses: {
+        monday: [{ name: '叠课甲', period: '1' }, { name: '叠课乙', period: '1' }],
+        tuesday: [], wednesday: [], thursday: [], friday: []
+      }
+    }));
+    const overlapped = events.find(e => e.includes('SUMMARY:叠课乙'));
+    expect(overlapped).toContain('TRIGGER:-PT0M');
+    expect(overlapped).toContain('DESCRIPTION:上一节已下课，接下来：叠课乙');
+  });
+
+  it('补课日（confirmed）单日事件同样按课间隙自适应', () => {
+    const events = parseEvents(buildCalendarIcs({
+      ...gapSchedule,
+      courses: { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [] },
+      makeupDays: [{
+        id: 'mk-gap', date: '2026-09-20', name: '中秋调休', status: 'confirmed', copyFrom: 'monday',
+        courses: [
+          { name: '补课首节', period: '1' },
+          { name: '补课短课间', period: '2' }
+        ]
+      }]
+    }));
+    const first = events.find(e => e.includes('SUMMARY:补课首节'));
+    expect(first).toContain('TRIGGER:-PT30M');
+    const short = events.find(e => e.includes('SUMMARY:补课短课间'));
+    expect(short).toContain('TRIGGER:-PT20M'); // 09:25 下课 09:45 上课
+    expect(short).toContain('DESCRIPTION:上一节已下课，接下来：补课短课间');
   });
 });
 

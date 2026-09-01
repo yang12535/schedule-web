@@ -923,15 +923,11 @@ function buildCalendarIcs(schedule) {
         eventLines.push(`SUMMARY:${escapeIcsText(course.name)}`);
         if (course.location) eventLines.push(`LOCATION:${escapeIcsText(course.location)}`);
         eventLines.push(`DESCRIPTION:${escapeIcsText(desc.join('\n'))}`);
-        eventLines.push('BEGIN:VALARM');
-        eventLines.push('ACTION:DISPLAY');
-        eventLines.push('TRIGGER:-PT15M');
-        eventLines.push(`DESCRIPTION:${escapeIcsText(course.name)}即将开始`);
-        eventLines.push('END:VALARM');
-        eventLines.push('END:VEVENT');
+        // VALARM 与 END:VEVENT 在全天事件收集完毕后按课间隙统一生成（见下方 dayGroups 逻辑）
         events.push({
           dayKey: `w${week}-${day}`,
           start: start.getTime(),
+          end: end.getTime(),
           slot: slotOfFirstPeriod(periods[0]),
           name: course.name,
           descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
@@ -976,15 +972,11 @@ function buildCalendarIcs(schedule) {
       eventLines.push(`SUMMARY:${escapeIcsText(course.name)}`);
       if (course.location) eventLines.push(`LOCATION:${escapeIcsText(course.location)}`);
       eventLines.push(`DESCRIPTION:${escapeIcsText(desc.join('\n'))}`);
-      eventLines.push('BEGIN:VALARM');
-      eventLines.push('ACTION:DISPLAY');
-      eventLines.push('TRIGGER:-PT15M');
-      eventLines.push(`DESCRIPTION:${escapeIcsText(course.name)}即将开始`);
-      eventLines.push('END:VALARM');
-      eventLines.push('END:VEVENT');
+      // VALARM 与 END:VEVENT 在全天事件收集完毕后按课间隙统一生成（见下方 dayGroups 逻辑）
       events.push({
         dayKey: `m-${day.date}`,
         start: start.getTime(),
+        end: end.getTime(),
         slot: slotOfFirstPeriod(periods[0]),
         name: course.name,
         descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
@@ -992,9 +984,32 @@ function buildCalendarIcs(schedule) {
       });
     }
   }
+  // 单课提醒时机按课间隙自适应：按天分组、按开始时间排序后，计算每节课与当天前一节课的
+  // 间隙 gap（分钟）= 本课开始 - 前课结束。无同日前课或 gap ≥ 30（如午休/晚饭后第一节）
+  // → 课前 30 分钟提醒（-PT30M）；gap < 30（短课间，含 gap≤0 叠课兜底取 0）→ 前一节课
+  // 下课时刻提醒（TRIGGER = 负的间隙分钟数），效果为前课一下课就弹。
+  const dayGroups = new Map(); // dayKey -> events[]
+  for (const ev of events) {
+    if (!dayGroups.has(ev.dayKey)) dayGroups.set(ev.dayKey, []);
+    dayGroups.get(ev.dayKey).push(ev);
+  }
+  for (const group of dayGroups.values()) {
+    group.sort((a, b) => a.start - b.start);
+    group.forEach((ev, i) => {
+      const prev = group[i - 1];
+      const gap = prev ? Math.round((ev.start - prev.end) / 60000) : null;
+      const longGap = gap === null || gap >= 30;
+      ev.lines.push('BEGIN:VALARM');
+      ev.lines.push('ACTION:DISPLAY');
+      ev.lines.push(longGap ? 'TRIGGER:-PT30M' : `TRIGGER:-PT${Math.max(gap, 0)}M`);
+      ev.lines.push(`DESCRIPTION:${escapeIcsText(longGap ? `${ev.name} 30 分钟后开始` : `上一节已下课，接下来：${ev.name}`)}`);
+      ev.lines.push('END:VALARM');
+      ev.lines.push('END:VEVENT');
+    });
+  }
   // 时段汇总提醒：按「天 × 时段」分组，每组有课的时段额外生成一个独立的汇总 VEVENT。
   // 很多日历客户端（Google 日历等）一个 VEVENT 只认一条 VALARM，所以不能像课程事件那样
-  // 把汇总提醒作为第二条闹钟塞进首课事件，必须独立成事件；课程事件仍只有一条 -PT15M VALARM。
+  // 把汇总提醒作为第二条闹钟塞进首课事件，必须独立成事件；课程事件仍只有一条自适应 VALARM。
   // 汇总事件 DTSTART = 该时段当天最早课的上课时间 - 60 分钟，DTEND = DTSTART + 5 分钟，
   // 闹钟 TRIGGER:PT0M（事件开始时提醒）。
   const slotGroups = new Map(); // `${dayKey}|${slot}` -> events[]
