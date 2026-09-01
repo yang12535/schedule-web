@@ -755,6 +755,8 @@
       document.getElementById('courseStartWeek').value = '1';
       document.getElementById('courseEndWeek').value = totalWeeks;
       document.getElementById('courseWeekType').value = 'all';
+      document.getElementById('courseCustomStart').value = '';
+      document.getElementById('courseCustomEnd').value = '';
       document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
       // 重置补课模式
       const makeupCb = document.getElementById('courseMakeup');
@@ -799,6 +801,15 @@
       if (startWeek > endWeek) {
         return showToast('起始周次不能大于结束周次', 'error');
       }
+      // 自定义上下课时间（可选）：两个都填才生效，且结束必须晚于开始
+      const customStart = document.getElementById('courseCustomStart').value;
+      const customEnd = document.getElementById('courseCustomEnd').value;
+      if ((customStart && !customEnd) || (!customStart && customEnd)) {
+        return showToast('自定义上下课时间需同时填写或同时留空', 'error');
+      }
+      if (customStart && customEnd && customEnd <= customStart) {
+        return showToast('自定义下课时间必须晚于上课时间', 'error');
+      }
       const course = {
         id: editingCourseId || Date.now().toString() + Math.random().toString(36).substr(2, 5),
         name, period, day,
@@ -810,6 +821,10 @@
         weekType: document.getElementById('courseWeekType').value,
         isMakeup
       };
+      if (customStart && customEnd) {
+        course.customStart = customStart;
+        course.customEnd = customEnd;
+      }
       if (skipThisWeek) course.skipWeek = Math.max(1, Math.min(totalWeeks, getCurrentWeek()));
       
       if (editingCourseId) {
@@ -844,6 +859,8 @@
       document.getElementById('courseStartWeek').value = c.startWeek || 1;
       document.getElementById('courseEndWeek').value = c.endWeek || totalWeeks;
       document.getElementById('courseWeekType').value = c.weekType || 'all';
+      document.getElementById('courseCustomStart').value = c.customStart || '';
+      document.getElementById('courseCustomEnd').value = c.customEnd || '';
       // 恢复补课模式状态：优先使用持久化的 isMakeup，兼容旧数据时再回退到启发式判断
       const isMakeup = Object.prototype.hasOwnProperty.call(c, 'isMakeup')
         ? !!c.isMakeup
@@ -935,7 +952,8 @@
 
     function exportData() {
       if (!schedule) return;
-      const data = {name:schedule.name,description:schedule.description,semesterStart:schedule.semesterStart,courses:schedule.courses,totalPeriods,totalWeeks,periodSettings,exportDate:new Date().toISOString()};
+      // 备份需覆盖全部可恢复数据：公告与调休补课日一并导出，导入端会校验并恢复
+      const data = {name:schedule.name,description:schedule.description,semesterStart:schedule.semesterStart,courses:schedule.courses,announcements:Array.isArray(schedule.announcements)?schedule.announcements:[],makeupDays:getMakeupDays(),totalPeriods,totalWeeks,periodSettings,exportDate:new Date().toISOString()};
       const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
       const a = Object.assign(document.createElement('a'), {href: url, download: `${schedule.name}_课表.json`});
       a.click();

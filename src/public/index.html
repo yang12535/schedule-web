@@ -300,6 +300,13 @@
           </div>
         </div>
         <div class="form-group">
+          <label class="form-label">自定义上下课时间（可选，留空则按节次时间）</label>
+          <div class="form-row">
+            <input type="time" class="form-input" id="courseCustomStart">
+            <input type="time" class="form-input" id="courseCustomEnd">
+          </div>
+        </div>
+        <div class="form-group">
           <label class="form-label">周次范围</label>
           <div class="form-row-3">
             <select class="form-select" id="courseStartWeek"></select>
@@ -487,7 +494,7 @@
         <button class="modal-close" onclick="closeIcsModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <p style="font-size: 13px; color: var(--gray-600); margin-bottom: 12px;">把下面的链接添加到手机日历（iOS：设置 → 日历 → 账户 → 添加已订阅的日历；Android/电脑：日历应用的「通过 URL 订阅」），课表会按学期自动展开，每节课提前 15 分钟提醒。</p>
+        <p style="font-size: 13px; color: var(--gray-600); margin-bottom: 12px;">把下面的链接添加到手机日历（iOS：设置 → 日历 → 账户 → 添加已订阅的日历；Android/电脑：日历应用的「通过 URL 订阅」），课表会按学期自动展开。提醒为自适应：课间 ≥30 分钟时提前 30 分钟提醒，短课间在上一节下课时提醒；另外每个时段（上午/下午/晚上）开课前 60 分钟会推送当天该时段的课程汇总预告。</p>
         <input type="text" class="ics-link-input" id="icsLinkInput" readonly onclick="this.select()">
         <p style="font-size: 12px; color: var(--gray-400); margin-top: 10px;">节假日当天不生成课程事件；课程变动后日历会在下次刷新时自动更新。</p>
       </div>
