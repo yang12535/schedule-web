@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>班级课表</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" crossorigin="anonymous" integrity="sha384-yNSZBFvuOWcmww494a9+1zNuvgUGEXoWkein7cxP8wHUTi3iXCU4vJ7hr3tzBCml"></script>
   <style>
     :root {
       --primary: #4A90D9;
@@ -49,7 +49,7 @@
     .add-btn { width: 100%; padding: 16px; border: 2px dashed var(--gray-200); border-radius: 12px; background: white; color: var(--gray-600); cursor: pointer; margin-bottom: 12px; }
     .add-btn:hover { border-color: var(--primary); color: var(--primary); }
     
-    .course-item { display: flex; margin-bottom: 12px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .course-item { display: flex; margin-bottom: 12px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); position: relative; }
     .course-item.current { box-shadow: 0 0 0 2px var(--coral); }
     .course-time { width: 72px; padding: 16px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--gray-50); border-right: 1px solid var(--gray-200); }
     .course-time .period { font-size: 11px; color: var(--gray-400); }
@@ -60,6 +60,10 @@
     .course-info[data-type="security"] { border-color: #4CAF50; background: #E8F5E9; }
     .course-info[data-type="politics"] { border-color: #9C27B0; background: #F3E5F5; }
     .course-info[data-type="linux"] { border-color: #00BCD4; background: #E0F7FA; }
+    .course-info[data-type="default"] { border-color: #9E9E9E; background: #F5F5F5; }
+    .course-info[data-type="psychology"] { border-color: #E91E63; background: #FCE4EC; }
+    .course-info[data-type="math"] { border-color: #F44336; background: #FFEBEE; }
+    .course-info[data-type="chemistry"] { border-color: #3F51B5; background: #E8EAF6; }
     .course-name { font-size: 16px; font-weight: 600; color: var(--gray-900); margin-bottom: 6px; }
     .course-meta { font-size: 13px; color: var(--gray-600); }
     .course-weeks { font-size: 11px; color: var(--gray-400); margin-top: 4px; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 10px; display: inline-block; }
@@ -100,20 +104,119 @@
     .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: white; border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
     .next-course.no-class { border-color: var(--gray-400); }
     .next-course.in-class { border-color: #10B981; }
+    .next-course.next-week { border-color: var(--primary); }
+    .next-course.ending-soon { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2), 0 4px 20px rgba(0,0,0,0.1); animation: pulse-warning 1.2s ease-in-out infinite; }
     .next-course-title { font-size: 14px; color: var(--coral); font-weight: 600; margin-bottom: 8px; }
     .next-course.no-class .next-course-title { color: var(--gray-400); }
     .next-course.in-class .next-course-title { color: #10B981; }
+    .next-course.next-week .next-course-title,
+    .next-course.next-week .next-course-countdown { color: var(--primary); }
+    .next-course.ending-soon .next-course-title { color: #D97706; }
     .next-course-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     .next-course-info { font-size: 13px; color: var(--gray-600); }
-    .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; }
+    .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--coral); }
     .next-course-secondary { font-size: 13px; color: var(--gray-400); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--gray-200); }
+    @keyframes pulse-warning {
+      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.28), 0 4px 20px rgba(0,0,0,0.1); }
+      70% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0), 0 4px 20px rgba(0,0,0,0.1); }
+      100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 4px 20px rgba(0,0,0,0.1); }
+    }
+    
+    /* 公告弹窗 */
+    .announcement-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 3000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+    .announcement-overlay.active { opacity: 1; visibility: visible; }
+    .announcement-modal { background: white; border-radius: 20px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    .announcement-overlay.active .announcement-modal { transform: scale(1); }
+    .announcement-header { background: linear-gradient(135deg, #4A90D9, #357ABD); color: white; padding: 24px 20px 16px; border-radius: 20px 20px 0 0; }
+    .announcement-header h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .announcement-header .ann-date { font-size: 12px; opacity: 0.8; }
+    .announcement-body { padding: 20px; font-size: 15px; line-height: 1.7; color: var(--gray-900); white-space: pre-wrap; }
+    .announcement-footer { padding: 16px 20px; border-top: 1px solid var(--gray-200); display: flex; gap: 10px; }
+    .announcement-footer .btn { flex: 1; }
+    .announcement-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
+    
+    /* 补课标签 */
+    .makeup-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
+    
+    /* 本周不上印章 */
+    .skip-week-stamp {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 52px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(220, 38, 38, 0.85);
+      color: white;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: center;
+      border-radius: 6px;
+      z-index: 10;
+      pointer-events: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      letter-spacing: 1px;
+    }
+    .course-item.skip-week .course-time,
+    .course-item.skip-week .course-info { opacity: 0.75; }
+    .course-item.skip-week .course-info { filter: grayscale(0.4); padding-right: 80px; }
+    .course-item.skip-week.has-actions .course-info { padding-right: 140px; }
+    .course-item.has-actions .skip-week-stamp { right: calc(12px + 32px + 6px + 32px + 8px); }
+    
+    /* 公告管理 */
+    .ann-list-item { background: white; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #4A90D9; }
+    .ann-list-item.disabled { border-left-color: var(--gray-400); opacity: 0.6; }
+    .ann-list-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .ann-list-meta { font-size: 12px; color: var(--gray-400); margin-bottom: 8px; }
+    .ann-list-actions { display: flex; gap: 8px; }
+    .ann-list-actions button { padding: 6px 12px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .ann-btn-edit { background: var(--primary-light); color: var(--primary); }
+    .ann-btn-del { background: #FEE2E2; color: #DC2626; }
+    .form-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .form-check input { width: 18px; height: 18px; accent-color: var(--primary); }
+    .form-check-label { font-size: 14px; color: var(--gray-600); }
     
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     
+    /* ICP 备案页脚 */
+    .icp-footer { text-align: center; padding: 8px 12px 24px; font-size: 12px; color: var(--gray-400); }
+    .icp-footer a { color: var(--gray-400); text-decoration: none; }
+
+    /* 节假日标注 */
+    .holiday-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; }
+    .workday-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; }
+    .holiday-notice { background: #FFF7ED; border: 1px solid #FED7AA; color: #C2410C; border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
+    .holiday-notice.workday { background: #FFFBEB; border-color: #FDE68A; color: #B45309; }
+    .ics-link-input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 12px; color: var(--gray-600); background: var(--gray-50); word-break: break-all; }
+
     .period-setting { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
     .period-setting label { width: 50px; font-size: 13px; color: var(--gray-600); }
     .period-setting input { padding: 8px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 13px; }
+
+    /* 调休补课日（「班」日） */
+    .makeup-days { padding-top: 0; }
+    .makeup-days-title { font-size: 15px; font-weight: 700; color: var(--gray-900); margin: 4px 0 10px; }
+    .makeup-day-card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 14px 16px; margin-bottom: 12px; border-left: 4px solid #F59E0B; }
+    .makeup-day-card.pending { border-left-color: var(--gray-400); }
+    .makeup-day-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .makeup-day-title { font-size: 15px; font-weight: 600; }
+    .makeup-day-sub { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
+    .makeup-day-badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; }
+    .makeup-day-badge.confirmed { background: #FEF3C7; color: #D97706; }
+    .makeup-day-badge.pending { background: var(--gray-100); color: var(--gray-600); }
+    .makeup-course-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px dashed var(--gray-200); font-size: 13px; }
+    .makeup-course-time { color: var(--gray-600); white-space: nowrap; }
+    .makeup-course-name { font-weight: 600; flex: 1; }
+    .makeup-course-meta { color: var(--gray-400); font-size: 12px; white-space: nowrap; }
+    .makeup-day-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .makeup-day-actions button { padding: 6px 12px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; background: var(--primary-light); color: var(--primary); }
+    .makeup-day-actions button.danger { background: #FEE2E2; color: #DC2626; }
+    .makeup-course-form-row { border: 1px solid var(--gray-200); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+    .makeup-course-form-row .row-del { margin-top: 8px; border: none; background: #FEE2E2; color: #DC2626; border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -128,18 +231,22 @@
       </div>
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div class="week-nav">
-          <button class="week-btn" onclick="changeWeek(-1)">&lt;</button>
+          <button class="week-btn" onclick="changeWeek(-1)"><</button>
           <span class="week-badge" id="weekDisplay">第1周</span>
-          <button class="week-btn" onclick="changeWeek(1)">&gt;</button>
+          <button class="week-btn" onclick="changeWeek(1)">></button>
         </div>
-        <div style="font-size: 12px; color: var(--gray-400);" id="currentDate"></div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="font-size: 12px; color: var(--gray-400);" id="currentDate"></div>
+          <button class="toolbar-btn" id="icsBtn" onclick="openIcsModal()" style="padding: 4px 10px; font-size: 12px;">📅 订阅日历</button>
+        </div>
       </div>
     </div>
 
     <div class="toolbar hide-scrollbar" id="toolbar" style="display: none;">
       <button class="toolbar-btn primary" onclick="openModal()">+ 添加</button>
-      <button class="toolbar-btn" onclick="saveChanges()">💾 保存</button>
+      <button class="toolbar-btn" data-action="save">💾 保存</button>
       <button class="toolbar-btn" onclick="openSettingsModal()">⚙️ 设置</button>
+      <button class="toolbar-btn" onclick="openAnnManageModal()">📢 公告</button>
       <button class="toolbar-btn" onclick="document.getElementById('fileInput').click()">📥 导入</button>
       <button class="toolbar-btn" onclick="exportData()">📤 导出</button>
       <button class="toolbar-btn danger" onclick="clearAll()">🗑️ 清空</button>
@@ -156,6 +263,11 @@
     <div class="content" id="scheduleContent">
       <div class="loading">加载中...</div>
     </div>
+
+    <!-- 调休补课日（「班」日）区块 -->
+    <div class="content makeup-days" id="makeupDaysSection" style="display: none;"></div>
+
+    <div class="icp-footer" id="icpFooter" style="display: none;"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" id="icpNumberLink"></a></div>
   </div>
 
   <!-- Course Modal -->
@@ -208,15 +320,29 @@
           <input type="text" class="form-input" id="courseTeacher" placeholder="例如：张老师">
         </div>
         <div class="form-group">
-          <label class="form-label">颜色标记 <span style="color:#DC2626;font-size:12px;">* 必须选择</span></label>
+          <label class="form-label">颜色标记</label>
           <div class="color-options" id="colorOptions">
             <div class="color-option" data-type="database" style="background: #E3F2FD;"></div>
             <div class="color-option" data-type="english" style="background: #FFF3E0;"></div>
             <div class="color-option" data-type="security" style="background: #E8F5E9;"></div>
             <div class="color-option" data-type="politics" style="background: #F3E5F5;"></div>
             <div class="color-option" data-type="linux" style="background: #E0F7FA;"></div>
+            <div class="color-option" data-type="default" style="background: #F5F5F5;"></div>
+            <div class="color-option" data-type="psychology" style="background: #FCE4EC;"></div>
+            <div class="color-option" data-type="math" style="background: #FFEBEE;"></div>
+            <div class="color-option" data-type="chemistry" style="background: #E8EAF6;"></div>
           </div>
-          <div style="color:#DC2626;font-size:12px;margin-top:8px;">⚠️ 保存前必须选择一个颜色，否则无法保存</div>
+        </div>
+        <div class="form-check" style="margin-top: 8px;">
+          <input type="checkbox" id="courseMakeup">
+          <label class="form-check-label" for="courseMakeup">补课模式（仅本周生效）</label>
+        </div>
+        <div id="makeupHint" style="font-size: 12px; color: var(--gray-400); margin-top: 4px; display: none;">
+          周次将自动设为当前周（第<span id="makeupWeekNum">1</span>周），且仅在该周显示
+        </div>
+        <div class="form-check" style="margin-top: 8px;">
+          <input type="checkbox" id="courseSkipThisWeek">
+          <label class="form-check-label" for="courseSkipThisWeek">本周不上（仅当前周生效）</label>
         </div>
       </div>
       <div class="modal-footer">
@@ -253,7 +379,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">总节数</label>
-            <input type="number" class="form-input" id="settingTotalPeriods" value="12" min="1" max="20" onchange="initPeriodSettings()">
+            <input type="number" class="form-input" id="settingTotalPeriods" value="12" min="1" max="20">
           </div>
         </div>
         <div id="periodSettingsContainer"></div>
@@ -265,13 +391,86 @@
     </div>
   </div>
 
+  <!-- Announcement Modal -->
+  <div class="announcement-overlay" id="announcementModal">
+    <div class="announcement-modal">
+      <div class="announcement-header">
+        <h3 id="annTitle">📢 公告</h3>
+        <div class="ann-date" id="annDate"></div>
+      </div>
+      <div class="announcement-body" id="annContent"></div>
+      <div class="announcement-footer">
+        <button class="btn btn-secondary" onclick="dismissAnnouncement()">我知道了</button>
+        <button class="btn btn-primary" onclick="dontShowAgain()" id="annDontShowBtn">不再显示</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Announcement Manage Modal -->
+  <div class="modal-overlay" id="annManageModal">
+    <div class="modal" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3 class="modal-title">📢 公告管理</h3>
+        <button class="modal-close" onclick="closeAnnManageModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="annListContainer"></div>
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--gray-200);">
+          <h4 style="font-size: 16px; margin-bottom: 12px;">添加/编辑公告</h4>
+          <input type="hidden" id="annEditId">
+          <div class="form-group">
+            <label class="form-label">标题</label>
+            <input type="text" class="form-input" id="annEditTitle" placeholder="公告标题">
+          </div>
+          <div class="form-group">
+            <label class="form-label">内容</label>
+            <textarea class="form-input" id="annEditContent" rows="4" placeholder="公告内容" style="resize: vertical;"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">生效日期</label>
+              <input type="date" class="form-input" id="annEditStart">
+            </div>
+            <div class="form-group">
+              <label class="form-label">截止日期</label>
+              <input type="date" class="form-input" id="annEditEnd">
+            </div>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" id="annEditEnabled" checked>
+            <label class="form-check-label" for="annEditEnabled">启用</label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAnnManageModal()">关闭</button>
+        <button class="btn btn-primary" onclick="saveAnnouncement()">保存公告</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Modal -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal" style="max-width: 400px;">
+      <div class="modal-header"><h3 class="modal-title">⚠️ 确认</h3></div>
+      <div class="modal-body" id="confirmBody" style="font-size: 15px;"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="resolveConfirm(false)">取消</button>
+        <button class="btn btn-primary" onclick="resolveConfirm(true)">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Password Modal -->
   <div class="modal-overlay" id="passwordModal">
     <div class="modal">
       <div class="modal-header"><h3 class="modal-title">🔒 需要密码</h3></div>
       <div class="modal-body" style="text-align: center;">
         <p style="color: var(--gray-600); margin-bottom: 16px;">请输入编辑密码</p>
-        <input type="text" inputmode="numeric" pattern="[0-9]*" id="passwordInput" placeholder="输入密码" style="width: 100%; padding: 12px; border: 2px solid #4A90D9; border-radius: 8px; font-size: 18px; text-align: center; -moz-appearance: textfield;">
+        <div style="position: relative; width: 100%;">
+          <input type="password" inputmode="numeric" pattern="[0-9]*" id="passwordInput" placeholder="输入密码" style="width: 100%; padding: 12px 56px 12px 12px; border: 2px solid #4A90D9; border-radius: 8px; font-size: 18px; text-align: center; -moz-appearance: textfield;">
+          <button type="button" onclick="togglePasswordVisibility()" id="togglePasswordBtn" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #4A90D9; font-size: 14px; cursor: pointer; padding: 4px 8px; user-select: none;">显示</button>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closePasswordModal()">取消</button>
@@ -280,549 +479,97 @@
     </div>
   </div>
 
+  <!-- ICS 订阅 Modal -->
+  <div class="modal-overlay" id="icsModal">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title">📅 订阅日历</h3>
+        <button class="modal-close" onclick="closeIcsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--gray-600); margin-bottom: 12px;">把下面的链接添加到手机日历（iOS：设置 → 日历 → 账户 → 添加已订阅的日历；Android/电脑：日历应用的「通过 URL 订阅」），课表会按学期自动展开，每节课提前 15 分钟提醒。</p>
+        <input type="text" class="ics-link-input" id="icsLinkInput" readonly onclick="this.select()">
+        <p style="font-size: 12px; color: var(--gray-400); margin-top: 10px;">节假日当天不生成课程事件；课程变动后日历会在下次刷新时自动更新。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeIcsModal()">关闭</button>
+        <button class="btn btn-primary" onclick="copyIcsLink()">复制链接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增补课日 Modal -->
+  <div class="modal-overlay" id="makeupDayModal">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title">🛠️ 新增补课日</h3>
+        <button class="modal-close" onclick="closeMakeupDayModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">补课日期 *</label>
+          <input type="date" class="form-input" id="makeupDayDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label">名称（选填）</label>
+          <input type="text" class="form-input" id="makeupDayName" placeholder="例如：中秋节调休">
+        </div>
+        <p style="font-size: 12px; color: var(--gray-400);">新建后标记为「待添加」，等学校通知补哪天的课后再补充课程。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeMakeupDayModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveMakeupDay()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 补课日课程 Modal -->
+  <div class="modal-overlay" id="makeupCoursesModal">
+    <div class="modal" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="makeupCoursesTitle">添加课程</h3>
+        <button class="modal-close" onclick="closeMakeupCoursesModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">课程来源</label>
+          <select class="form-select" id="makeupCoursesMode">
+            <option value="copy">复制平时某天的课程</option>
+            <option value="custom">自建课程</option>
+          </select>
+        </div>
+        <div class="form-group" id="makeupCopyGroup">
+          <label class="form-label">复制周几的课</label>
+          <select class="form-select" id="makeupCopyFrom">
+            <option value="monday">周一</option>
+            <option value="tuesday">周二</option>
+            <option value="wednesday">周三</option>
+            <option value="thursday">周四</option>
+            <option value="friday">周五</option>
+          </select>
+        </div>
+        <div id="makeupCustomGroup" style="display: none;">
+          <div id="makeupCourseRows"></div>
+          <button class="add-btn" type="button" onclick="addMakeupCourseRow()">+ 添加一条课程</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeMakeupCoursesModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveMakeupCourses()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <input type="file" id="fileInput" style="display: none;" accept=".json" onchange="importData(this)">
   <div class="toast" id="toast"></div>
 
   <div class="next-course" id="nextCourse">
-    <div class="next-course-title">⏰ 下一节课</div>
-    <div id="nextCourseContent">
-      <div class="next-course-name">--</div>
-      <div class="next-course-info">--</div>
-    </div>
+    <div id="nextCourseContent"></div>
   </div>
 
-  <script>
-    // State
-    let schedule = null, isEditMode = false, currentDay = 'monday', currentWeekOffset = 0, editingCourseId = null, editPassword = '';
-    let totalPeriods = 12, totalWeeks = 16;
-    const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
-    const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
-    let periodSettings = [...defaultPeriods];
-
-    async function init() {
-      await loadSchedule();
-      initWeekOptions();
-      initPeriodSettings();
-      updateDate();
-      setCurrentDayByDate();
-      setupListeners();
-      updateNextCourse();
-      setInterval(() => { renderSchedule(); updateNextCourse(); }, 60000);
-    }
-
-    async function loadSchedule() {
-      try {
-        const res = await fetch('/api/schedule');
-        schedule = await res.json();
-        if (schedule.periodSettings?.length) periodSettings = schedule.periodSettings;
-        if (schedule.totalPeriods) totalPeriods = schedule.totalPeriods;
-        if (schedule.totalWeeks) totalWeeks = schedule.totalWeeks;
-        document.getElementById('className').textContent = schedule.name;
-        document.getElementById('classDesc').textContent = schedule.description || '点击右上角切换编辑模式';
-        document.title = schedule.name;
-        updateWeekDisplay();
-        renderSchedule();
-      } catch { document.getElementById('scheduleContent').innerHTML = '<div class="empty-state">加载失败</div>'; }
-    }
-
-    function initWeekOptions() {
-      const start = document.getElementById('courseStartWeek'), end = document.getElementById('courseEndWeek');
-      start.innerHTML = end.innerHTML = '';
-      for (let i = 1; i <= totalWeeks; i++) {
-        start.add(new Option(`第${i}周起`, i));
-        end.add(new Option(`到第${i}周`, i));
-      }
-      start.value = 1; end.value = totalWeeks;
-    }
-
-    function initPeriodSettings() {
-      const container = document.getElementById('periodSettingsContainer'), count = +document.getElementById('settingTotalPeriods')?.value || totalPeriods;
-      totalPeriods = count;
-      while (periodSettings.length < count) {
-        const last = periodSettings[periodSettings.length - 1];
-        const [h, m] = last.startTime.split(':'); 
-        const totalMin = +h * 60 + +m + last.duration + 10;
-        periodSettings.push({startTime: `${String(Math.floor(totalMin/60)).padStart(2,'0')}:${String(totalMin%60).padStart(2,'0')}`, duration: 45});
-      }
-      container.innerHTML = periodSettings.slice(0, count).map((p, i) => `
-        <div class="period-setting">
-          <label>第${i+1}节</label>
-          <input type="time" id="periodTime${i}" value="${p.startTime}">
-          <input type="number" id="periodDuration${i}" value="${p.duration}" min="1" max="180" style="width:60px;">
-          <span style="font-size:12px;color:var(--gray-400);">分钟</span>
-        </div>
-      `).join('');
-    }
-
-    function setCurrentDayByDate() {
-      const dayMap = {1:'monday',2:'tuesday',3:'wednesday',4:'thursday',5:'friday'};
-      const today = dayMap[new Date().getDay()];
-      if (today) {
-        currentDay = today;
-        document.querySelectorAll('.day-tab').forEach(t => t.classList.toggle('active', t.dataset.day === currentDay));
-        renderSchedule();
-      }
-    }
-
-    function updateDate() { 
-      const d = new Date(), w = ['日','一','二','三','四','五','六']; 
-      document.getElementById('currentDate').textContent = `${d.getMonth()+1}月${d.getDate()}日 周${w[d.getDay()]}`; 
-    }
-
-    function getCurrentWeek() {
-      const diff = new Date() - new Date(schedule.semesterStart);
-      return Math.max(1, Math.floor(diff / 604800000) + 1);
-    }
-
-    function updateWeekDisplay() {
-      const week = getCurrentWeek() + currentWeekOffset;
-      document.getElementById('weekDisplay').textContent = `第${week}周`;
-      const start = new Date(schedule.semesterStart);
-      ['monday','tuesday','wednesday','thursday','friday'].forEach((day, i) => {
-        const date = new Date(start.getTime() + (week - 1) * 604800000 + i * 86400000);
-        document.querySelector(`[data-day="${day}"] .day-number`).textContent = `${date.getMonth()+1}/${date.getDate()}`;
-      });
-    }
-
-    function changeWeek(delta) { currentWeekOffset += delta; updateWeekDisplay(); renderSchedule(); updateNextCourse(); }
-
-    function parsePeriods(p) {
-      p = p.replace(/[第节]/g, '').trim();
-      if (p.includes('-')) { const [s,e]=p.split('-').map(Number); return Array.from({length:e-s+1},(_,i)=>s+i); }
-      if (p.includes(',')) return p.split(',').map(Number).filter(Boolean);
-      const n = +p; return n ? [n] : [];
-    }
-
-    function formatPeriod(p) {
-      const ps = parsePeriods(p);
-      return ps.length > 1 ? `第${ps[0]}-${ps.at(-1)}节` : `第${ps[0]}节`;
-    }
-
-    function getTimeText(p) {
-      const ps = parsePeriods(p);
-      if (!ps.length) return '';
-      const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
-      if (!first || !last) return '';
-      const end = (([h,m]) => { const t = +h*60 + +m + last.duration; return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; })(last.startTime.split(':'));
-      return `${first.startTime}-${end}`;
-    }
-
-    function isCurrentCourse(c) {
-      if (currentWeekOffset !== 0) return false;
-      // 修复：周末时不标记任何课程为当前课程
-      const today = new Date().getDay();
-      if (today === 0 || today === 6) return false;
-      const now = new Date().getHours() * 60 + new Date().getMinutes();
-      const ps = parsePeriods(c.period);
-      const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
-      if (!first || !last) return false;
-      return now >= (+first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1]) && 
-             now < (+last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration);
-    }
-
-    // 获取当前正在上的课程
-    function getCurrentCourse() {
-      if (currentWeekOffset !== 0) return null;
-      // 周末无课
-      const today = new Date().getDay();
-      if (today === 0 || today === 6) return null;
-      const dayMap = {1:'monday',2:'tuesday',3:'wednesday',4:'thursday',5:'friday'};
-      const todayKey = dayMap[today];
-      if (!todayKey) return null;
-      const week = getCurrentWeek();
-      const courses = schedule.courses[todayKey] || [];
-      const now = new Date().getHours() * 60 + new Date().getMinutes();
-      for (const c of courses) {
-        if (!isActiveInWeek(c, week)) continue;
-        const ps = parsePeriods(c.period);
-        const first = periodSettings[ps[0]-1], last = periodSettings[ps.at(-1)-1];
-        if (!first || !last) continue;
-        const startMin = +first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1];
-        const endMin = +last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration;
-        if (now >= startMin && now < endMin) {
-          return {...c, dayName: dayNames[todayKey], startMin, endMin, remaining: endMin - now};
-        }
-      }
-      return null;
-    }
-
-    function isActiveInWeek(c, week) {
-      const s = c.startWeek || 1, e = c.endWeek || 20, t = c.weekType || 'all';
-      if (week < s || week > e) return false;
-      return t === 'all' ? true : t === 'odd' ? week % 2 === 1 : week % 2 === 0;
-    }
-
-    function formatWeekRange(c) {
-      let t = `第${c.startWeek||1}-${c.endWeek||16}周`;
-      if (c.weekType === 'odd') t += '（单周）';
-      else if (c.weekType === 'even') t += '（双周）';
-      return t;
-    }
-
-    function renderSchedule() {
-      const container = document.getElementById('scheduleContent'), courses = schedule.courses[currentDay] || [];
-      let html = isEditMode ? `<button class="add-btn" onclick="openModal()">+ 添加${dayNames[currentDay]}课程</button>` : '';
-      if (!courses.length) {
-        html += `<div class="empty-state"><div class="empty-state-icon">📚</div><p>${isEditMode ? '暂无课程' : '今日无课'}</p></div>`;
-      } else {
-        const week = getCurrentWeek() + currentWeekOffset;
-        [...courses].sort((a,b) => (parsePeriods(a.period)[0]||0) - (parsePeriods(b.period)[0]||0)).forEach(c => {
-          if (!isActiveInWeek(c, week)) return;
-          const isCurrent = isCurrentCourse(c);
-          html += `
-            <div class="course-item ${isCurrent?'current':''}">
-              <div class="course-time"><span class="period">${formatPeriod(c.period)}</span><span class="time">${getTimeText(c.period)}</span></div>
-              <div class="course-info" data-type="${c.type||''}">
-                <div class="course-name">${c.name}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
-                <div class="course-meta">${c.location?`📍${c.location}`:''}${c.teacher?` | 👤${c.teacher}`:''}</div>
-                ${c.startWeek||c.endWeek?`<div class="course-weeks">${formatWeekRange(c)}</div>`:''}
-                ${isEditMode?`<div class="course-actions"><button onclick="editCourse('${c.id}')">✏️</button><button onclick="deleteCourse('${c.id}')">🗑️</button></div>`:''}
-              </div>
-            </div>`;
-        });
-      }
-      container.innerHTML = html;
-    }
-
-    function findNextCourse() {
-      const now = new Date(), week = getCurrentWeek() + currentWeekOffset, dayOrder = ['monday','tuesday','wednesday','thursday','friday'];
-      const courses = [];
-      dayOrder.forEach((day, i) => {
-        (schedule.courses[day] || []).forEach(c => {
-          if (!isActiveInWeek(c, week)) return;
-          const ps = parsePeriods(c.period);
-          const setting = periodSettings[ps[0]-1];
-          if (!setting) return;
-          const [h, m] = setting.startTime.split(':');
-          const time = new Date(now);
-          time.setDate(time.getDate() + (i + 1 - time.getDay()));
-          time.setHours(+h, +m, 0, 0);
-          if (time > now) courses.push({...c, dayName: dayNames[day], time});
-        });
-      });
-      return courses.sort((a,b) => a.time - b.time)[0] || null;
-    }
-
-    function formatRemaining(minutes) {
-      if (minutes < 0) minutes = 0;
-      const hours = Math.floor(minutes / 60);
-      const mins = Math.floor(minutes % 60);
-      if (hours > 0) return `${hours}小时${mins}分钟`;
-      return `${mins}分钟`;
-    }
-
-    function updateNextCourse() {
-      const el = document.getElementById('nextCourse'), content = document.getElementById('nextCourseContent');
-      const current = getCurrentCourse();
-      const next = findNextCourse();
-      
-      // 清除状态类
-      el.classList.remove('no-class', 'in-class', 'ending-soon');
-      
-      // 情况1：周末或无课
-      if (!current && !next) {
-        el.classList.add('no-class');
-        content.innerHTML = '<div class="next-course-name">今日无课</div><div class="next-course-info">好好休息吧 🎉</div>';
-        return;
-      }
-      
-      // 情况2：正在上课
-      if (current) {
-        el.classList.add('in-class');
-        const isEndingSoon = current.remaining <= 10; // 10分钟内下课
-        
-        if (isEndingSoon && next) {
-          // 下课前 ≤10 分钟：主从切换！大字显示下一节课，小字显示当前即将结束
-          el.classList.add('ending-soon');
-          const diff = next.time - new Date();
-          const diffMins = Math.floor(diff / 60000);
-          
-          let html = `<div class="next-course-title">⏰ 下一节课</div>`;
-          html += `<div class="next-course-name">${next.name}</div>`;
-          html += `<div class="next-course-info">${next.dayName === current.dayName ? '今天' : next.dayName} ${getTimeText(next.period)} | 📍${next.location||'暂无地点'}</div>`;
-          html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
-          // 小字显示当前课即将结束
-          html += `<div class="next-course-secondary">${current.name} · 剩余${formatRemaining(current.remaining)}下课</div>`;
-          content.innerHTML = html;
-        } else {
-          // 正常上课中：大字显示当前课程，小字显示下一节课
-          const titleText = '当前课程';
-          let html = `<div class="next-course-title">📚 ${titleText}</div>`;
-          html += `<div class="next-course-name">${current.name} · 剩余${formatRemaining(current.remaining)}</div>`;
-          html += `<div class="next-course-info">📍${current.location||'暂无地点'} ${getTimeText(current.period)}</div>`;
-          
-          if (next) {
-            const diff = next.time - new Date();
-            const diffMins = Math.floor(diff / 60000);
-            html += `<div class="next-course-secondary">下一节课：${next.name}（${next.dayName === current.dayName ? '今天' : next.dayName}，还有${formatRemaining(diffMins)}）</div>`;
-          }
-          content.innerHTML = html;
-        }
-        return;
-      }
-      
-      // 情况3：课间休息/无课中，但有下一节课
-      if (!current && next) {
-        el.classList.remove('in-class', 'no-class');
-        const diff = next.time - new Date();
-        const diffMins = Math.floor(diff / 60000);
-        const isToday = next.dayName === dayNames[['monday','tuesday','wednesday','thursday','friday'][new Date().getDay() - 1]];
-        
-        let html = `<div class="next-course-title">⏰ 下一节课</div>`;
-        html += `<div class="next-course-name">${next.name}</div>`;
-        html += `<div class="next-course-info">${isToday ? '今天' : next.dayName} ${getTimeText(next.period)} | 📍${next.location||'暂无地点'}</div>`;
-        html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
-        content.innerHTML = html;
-        return;
-      }
-    }
-
-    function setupListeners() {
-      document.querySelectorAll('.day-tab').forEach(t => t.onclick = () => { currentDay = t.dataset.day; document.querySelectorAll('.day-tab').forEach(x => x.classList.remove('active')); t.classList.add('active'); renderSchedule(); });
-      document.querySelectorAll('.color-option').forEach(o => o.onclick = () => { document.querySelectorAll('.color-option').forEach(x => x.classList.remove('selected')); o.classList.add('selected'); });
-      ['courseModal','settingsModal','passwordModal'].forEach(id => document.getElementById(id).onclick = e => { if(e.target.id === id) window['close'+id.replace('Modal','').replace('course','Course').replace('settings','Settings').replace('password','Password')+'Modal'](); });
-      const pwdInput = document.getElementById('passwordInput');
-      pwdInput.addEventListener('keypress', e => { if(e.key === 'Enter') verifyPassword(); });
-      // Firefox 数字输入修复
-      pwdInput.addEventListener('input', e => {
-        e.target.value = e.target.value.replace(/[^0-9]/g, '');
-      });
-    }
-
-    async function toggleMode() {
-      if (isEditMode) { isEditMode = false; updateModeUI(); renderSchedule(); }
-      else {
-        const res = await fetch('/api/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:''})});
-        const data = await res.json();
-        if (data.requirePassword) {
-          document.getElementById('passwordModal').classList.add('active');
-          // 隐藏下一节课卡片
-          document.getElementById('nextCourse').style.display = 'none';
-        }
-        else enableEditMode();
-      }
-    }
-
-    function enableEditMode() { isEditMode = true; updateModeUI(); renderSchedule(); showToast('已进入编辑模式', 'success'); }
-
-    function updateModeUI() {
-      const btn = document.getElementById('modeBtn'), toolbar = document.getElementById('toolbar');
-      btn.className = 'mode-badge ' + (isEditMode ? 'edit' : '');
-      btn.innerHTML = isEditMode ? '✏️ 编辑' : '👀 查看';
-      toolbar.style.display = isEditMode ? 'flex' : 'none';
-    }
-
-    function closePasswordModal() { 
-      document.getElementById('passwordModal').classList.remove('active'); 
-      document.getElementById('passwordInput').value = ''; 
-      // 恢复下一节课卡片显示
-      document.getElementById('nextCourse').style.display = 'block';
-    }
-
-    async function verifyPassword() {
-      const password = document.getElementById('passwordInput').value;
-      const res = await fetch('/api/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
-      const data = await res.json();
-      if (data.valid) { editPassword = password; closePasswordModal(); enableEditMode(); }
-      else showToast('密码错误', 'error');
-    }
-
-    function openSettingsModal() {
-      document.getElementById('settingClassName').value = schedule.name || '';
-      document.getElementById('settingClassDesc').value = schedule.description || '';
-      document.getElementById('settingSemesterStart').value = schedule.semesterStart || '';
-      document.getElementById('settingTotalPeriods').value = totalPeriods;
-      document.getElementById('settingTotalWeeks').value = totalWeeks;
-      initPeriodSettings();
-      document.getElementById('settingsModal').classList.add('active');
-      // 隐藏下一节课卡片
-      document.getElementById('nextCourse').style.display = 'none';
-    }
-
-    function closeSettingsModal() { 
-      document.getElementById('settingsModal').classList.remove('active'); 
-      // 恢复下一节课卡片显示
-      document.getElementById('nextCourse').style.display = 'block';
-    }
-
-    async function saveSettings() {
-      const name = document.getElementById('settingClassName').value.trim();
-      const description = document.getElementById('settingClassDesc').value.trim();
-      const semesterStart = document.getElementById('settingSemesterStart').value;
-      const newTotalPeriods = +document.getElementById('settingTotalPeriods').value || 12;
-      const newTotalWeeks = +document.getElementById('settingTotalWeeks').value || 16;
-      const newPeriodSettings = [];
-      for (let i = 0; i < newTotalPeriods; i++) {
-        newPeriodSettings.push({startTime: document.getElementById(`periodTime${i}`).value, duration: +document.getElementById(`periodDuration${i}`).value || 45});
-      }
-      try {
-        const res = await fetch('/api/schedule/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,name,description,semesterStart,totalPeriods:newTotalPeriods,totalWeeks:newTotalWeeks,periodSettings:newPeriodSettings})});
-        const data = await res.json();
-        if (data.success) {
-          schedule.name = name; schedule.description = description; schedule.semesterStart = semesterStart;
-          totalPeriods = newTotalPeriods; totalWeeks = newTotalWeeks; periodSettings = newPeriodSettings;
-          initWeekOptions();
-          document.getElementById('className').textContent = name;
-          document.getElementById('classDesc').textContent = description || '点击右上角切换编辑模式';
-          document.title = name;
-          closeSettingsModal(); updateWeekDisplay(); renderSchedule();
-          showToast('设置已保存', 'success');
-        } else showToast(data.error || '保存失败', 'error');
-      } catch { showToast('网络错误', 'error'); }
-    }
-
-    function openModal() {
-      editingCourseId = null;
-      document.getElementById('modalTitle').textContent = '添加课程';
-      document.getElementById('courseName').value = document.getElementById('coursePeriod').value = document.getElementById('courseLocation').value = document.getElementById('courseTeacher').value = '';
-      document.getElementById('courseDay').value = currentDay;
-      document.getElementById('courseStartWeek').value = '1';
-      document.getElementById('courseEndWeek').value = totalWeeks;
-      document.getElementById('courseWeekType').value = 'all';
-      document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
-      document.getElementById('courseModal').classList.add('active');
-      // 隐藏下一节课卡片，避免遮挡弹窗底部
-      document.getElementById('nextCourse').style.display = 'none';
-    }
-
-    function closeModal() { 
-      document.getElementById('courseModal').classList.remove('active'); 
-      editingCourseId = null; 
-      // 恢复下一节课卡片显示
-      document.getElementById('nextCourse').style.display = 'block';
-    }
-
-    async function saveCourse() {
-      const name = document.getElementById('courseName').value.trim();
-      const period = document.getElementById('coursePeriod').value.trim();
-      const day = document.getElementById('courseDay').value;
-      if (!name) return showToast('请输入课程名称', 'error');
-      if (!period) return showToast('请输入节次', 'error');
-      const type = document.querySelector('.color-option.selected').dataset.type;
-      // 校验颜色是否选择
-      if (!type) return showToast('请选择颜色', 'error');
-      const course = {
-        id: editingCourseId || Date.now().toString(),
-        name, period, day,
-        location: document.getElementById('courseLocation').value.trim(),
-        teacher: document.getElementById('courseTeacher').value.trim(),
-        type,
-        startWeek: +document.getElementById('courseStartWeek').value,
-        endWeek: +document.getElementById('courseEndWeek').value,
-        weekType: document.getElementById('courseWeekType').value
-      };
-      if (editingCourseId) Object.keys(schedule.courses).forEach(d => schedule.courses[d] = schedule.courses[d].filter(c => c.id !== editingCourseId));
-      if (!schedule.courses[day]) schedule.courses[day] = [];
-      schedule.courses[day].push(course);
-      closeModal();
-      if (day !== currentDay) { currentDay = day; document.querySelectorAll('.day-tab').forEach(t => t.classList.toggle('active', t.dataset.day === day)); }
-      renderSchedule();
-      // 自动保存
-      await autoSave();
-    }
-
-    function editCourse(id) {
-      const c = schedule.courses[currentDay].find(x => x.id === id);
-      if (!c) return;
-      editingCourseId = id;
-      document.getElementById('modalTitle').textContent = '编辑课程';
-      document.getElementById('courseName').value = c.name;
-      document.getElementById('coursePeriod').value = c.period;
-      document.getElementById('courseDay').value = currentDay;
-      document.getElementById('courseLocation').value = c.location || '';
-      document.getElementById('courseTeacher').value = c.teacher || '';
-      document.getElementById('courseStartWeek').value = c.startWeek || 1;
-      document.getElementById('courseEndWeek').value = c.endWeek || totalWeeks;
-      document.getElementById('courseWeekType').value = c.weekType || 'all';
-      document.querySelectorAll('.color-option').forEach(o => o.classList.toggle('selected', o.dataset.type === (c.type || '')));
-      document.getElementById('courseModal').classList.add('active');
-    }
-
-    async function deleteCourse(id) {
-      if (!confirm('确定删除这门课程？')) return;
-      schedule.courses[currentDay] = schedule.courses[currentDay].filter(c => c.id !== id);
-      renderSchedule();
-      // 自动保存
-      await autoSave();
-    }
-
-    // 自动保存（静默保存，不显示提示）
-    async function autoSave() {
-      try {
-        const res = await fetch('/api/schedule/courses', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,courses:schedule.courses})});
-        const data = await res.json();
-        if (data.success) {
-          showToast('已自动保存', 'success');
-        } else {
-          showToast(data.error || '保存失败', 'error');
-        }
-      } catch { showToast('网络错误', 'error'); }
-    }
-
-    async function saveChanges() {
-      const btn = document.querySelector('.toolbar-btn:nth-child(2)');
-      btn.textContent = '保存中...';
-      try {
-        const res = await fetch('/api/schedule/courses', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,courses:schedule.courses})});
-        const data = await res.json();
-        showToast(data.success ? '保存成功' : data.error || '保存失败', data.success ? 'success' : 'error');
-      } catch { showToast('网络错误', 'error'); }
-      btn.textContent = '💾 保存';
-    }
-
-    function clearAll() {
-      if (!confirm('确定清空所有课程？此操作不可恢复。')) return;
-      schedule.courses = {monday:[],tuesday:[],wednesday:[],thursday:[],friday:[]};
-      renderSchedule();
-      showToast('已清空，记得保存');
-    }
-
-    function exportData() {
-      const data = {name:schedule.name,description:schedule.description,semesterStart:schedule.semesterStart,courses:schedule.courses,totalPeriods,totalWeeks,periodSettings,exportDate:new Date().toISOString()};
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}));
-      const a = Object.assign(document.createElement('a'), {href: url, download: `${schedule.name}_课表.json`});
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('已导出');
-    }
-
-    async function importData(input) {
-      const file = input.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const data = JSON.parse(e.target.result);
-          if (!data.courses) throw new Error('Invalid format');
-
-          const res = await fetch('/api/import', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:editPassword,data})});
-          const result = await res.json();
-          if (result.success) {
-            if (result.schedule) schedule = result.schedule;
-            if (data.periodSettings?.length) periodSettings = data.periodSettings;
-            if (data.totalPeriods) totalPeriods = data.totalPeriods;
-            if (data.totalWeeks) totalWeeks = data.totalWeeks;
-            initWeekOptions(); initPeriodSettings();
-            document.getElementById('className').textContent = schedule.name;
-            document.getElementById('classDesc').textContent = schedule.description || '点击右上角切换编辑模式';
-            document.title = schedule.name;
-            updateWeekDisplay(); renderSchedule(); updateNextCourse();
-            showToast('导入成功', 'success');
-          } else showToast(result.error || '导入失败', 'error');
-        } catch { showToast('文件格式错误', 'error'); }
-      };
-      reader.readAsText(file);
-      input.value = '';
-    }
-
-    function showToast(msg, type = '') {
-      const toast = document.getElementById('toast');
-      toast.textContent = msg;
-      toast.className = 'toast show ' + type;
-      setTimeout(() => toast.classList.remove('show'), 2500);
-    }
-
-    init();
-  </script>
+  <script src="js/date-utils.js"></script>
+  <script src="js/holidays.js"></script>
+  <script src="js/makeup-days.js"></script>
+  <script src="js/schedule.js"></script>
 </body>
 </html>

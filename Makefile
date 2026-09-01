@@ -73,7 +73,7 @@ reset:
 
 # 本地开发
 dev:
-	@cd src/server && npm install && npm start
+	@cd src/server && npm install && PUBLIC_PATH=../../src/public npm start
 
 install-dev:
 	@cd src/server && npm install

@@ -20,6 +20,12 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 generate_password() { echo $((100000 + RANDOM % 900000)); }
 
+# 修复：兼容 docker compose 和 docker-compose
+DOCKER_COMPOSE="docker compose"
+if ! $DOCKER_COMPOSE version &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+fi
+
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -116,7 +122,6 @@ HOST_PORT=30080
 
 # 数据存储路径
 DATA_PATH=./data
-LOGS_PATH=./logs
 EOF
         echo "$RANDOM_PASS" > .password
         chmod 600 .password
@@ -127,18 +132,21 @@ EOF
     
     # 创建数据目录
     set -a; source .env; set +a
-    mkdir -p data logs
+    mkdir -p data
+    # 修复：设置数据目录权限（与容器内 node 用户 UID=1000 对齐）
+    chmod 755 data
+    chown -R 1000:1000 data
     
     # 停止旧服务
     info "停止旧服务..."
-    docker-compose down 2>/dev/null || true
+    $DOCKER_COMPOSE down 2>/dev/null || true
     
     # 拉取最新镜像并启动
     info "拉取最新镜像..."
-    docker-compose pull
+    $DOCKER_COMPOSE pull
     
     info "启动服务..."
-    docker-compose up -d
+    $DOCKER_COMPOSE up -d
     
     # 等待服务启动
     sleep 3
@@ -161,9 +169,9 @@ EOF
         echo "  日志查看: docker logs -f class-schedule"
         echo ""
         echo "  管理命令:"
-        echo "    停止:   docker-compose down"
-        echo "    重启:   docker-compose restart"
-        echo "    更新:   docker-compose pull && docker-compose up -d"
+        echo "    停止:   $DOCKER_COMPOSE down"
+        echo "    重启:   $DOCKER_COMPOSE restart"
+        echo "    更新:   $DOCKER_COMPOSE pull && $DOCKER_COMPOSE up -d"
         echo "========================================"
     else
         error "部署失败，请检查日志: docker logs class-schedule"
