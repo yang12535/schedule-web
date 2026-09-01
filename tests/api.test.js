@@ -467,8 +467,9 @@ describe('Schedule API', () => {
     it.each([
       ['非整数 startWeek', { startWeek: 1.5 }],
       ['startWeek 大于 endWeek', { startWeek: 8, endWeek: 3 }],
-      ['未知 weekType', { weekType: 'monthly' }]
-    ])('导入时应拒绝无效周元数据：%s', async (_name, overrides) => {
+      ['未知 weekType', { weekType: 'monthly' }],
+      ['节次无法解析', { period: 'abc' }]
+    ])('导入时应拒绝无效课程字段：%s', async (_name, overrides) => {
       const payload = {
         password: 'test123',
         data: {
@@ -498,6 +499,63 @@ describe('Schedule API', () => {
         .expect(400);
 
       expect(res.body.error).toBe('Invalid courses structure');
+    });
+
+    it('导入应恢复 announcements 与 makeupDays 并原样回读', async () => {
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '备份恢复班',
+          courses: { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [] },
+          announcements: [{
+            id: 'ann-fic-1', title: '虚构活动通知', content: '虚构内容：本周活动暂停一次',
+            startDate: '2026-09-01', endDate: '2026-09-07', enabled: true
+          }],
+          makeupDays: [{
+            id: 'mk-fic-1', date: '2026-09-20', name: '虚构调休日', status: 'confirmed', copyFrom: 'friday',
+            courses: [{ id: 'c-fic-1', name: '虚构围棋入门', period: '1-2', teacher: '测试教师己', location: '虚拟楼C000' }]
+          }]
+        }
+      };
+
+      await request(app)
+        .post('/api/import')
+        .send(payload)
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.announcements).toHaveLength(1);
+      expect(res.body.announcements[0].title).toBe('虚构活动通知');
+      expect(res.body.makeupDays).toHaveLength(1);
+      expect(res.body.makeupDays[0].date).toBe('2026-09-20');
+      expect(res.body.makeupDays[0].courses[0].name).toBe('虚构围棋入门');
+    });
+
+    it.each([
+      ['重复日期', [
+        { id: 'mk-d1', date: '2026-09-20', name: '', status: 'pending', copyFrom: null, courses: [] },
+        { id: 'mk-d2', date: '2026-09-20', name: '', status: 'pending', copyFrom: null, courses: [] }
+      ]],
+      ['课程节次无法解析', [{
+        id: 'mk-d3', date: '2026-09-21', name: '', status: 'confirmed', copyFrom: null,
+        courses: [{ name: '虚构手工课', period: 'abc' }]
+      }]],
+      ['status 枚举外', [{ id: 'mk-d4', date: '2026-09-22', name: '', status: 'maybe', copyFrom: null, courses: [] }]],
+      ['非数组', 'not-an-array']
+    ])('导入时应拒绝非法 makeupDays：%s', async (_name, makeupDays) => {
+      const res = await request(app)
+        .post('/api/import')
+        .send({
+          password: 'test123',
+          data: {
+            name: '异常补课日课表',
+            courses: { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [] },
+            makeupDays
+          }
+        })
+        .expect(400);
+
+      expect(res.body.error).toBe('Invalid makeupDays');
     });
   });
 

@@ -52,8 +52,13 @@ function scheduleWithCourse(course) {
   };
 }
 
+// 只比较课程事件 UID：sw-daily 时段汇总事件的 UID 含时段归属，
+// 自定义时间改变实际开始时间会改变时段归属（见 slotOfActualStartMinutes），
+// 汇总事件随之更新属预期行为，不属于「同一事件 UID 稳定」的考察范围
 function swUids(ics) {
-  return ics.split('\r\n').filter(l => l.startsWith('UID:sw-')).sort();
+  return ics.split('\r\n')
+    .filter(l => l.startsWith('UID:sw-') && !l.startsWith('UID:sw-daily-') && !l.startsWith('UID:swm-'))
+    .sort();
 }
 
 describe('customStart/customEnd：ICS 常规周次展开', () => {

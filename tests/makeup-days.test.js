@@ -79,6 +79,25 @@ describe('调休补课日', () => {
       expect(isValidMakeupDays([{ id: '', date: '2026-09-20', status: 'pending', courses: [] }])).toBe(false); // id 为空
       expect(isValidMakeupDays('not-an-array')).toBe(false);
     });
+
+    it('isValidMakeupDays 拒绝重复 id 与重复 date（前端假设一个日期一条记录）', () => {
+      const day = (id, date) => ({ id, date, name: '', status: 'pending', copyFrom: null, courses: [] });
+      expect(isValidMakeupDays([day('mk-a', '2026-09-20'), day('mk-b', '2026-09-21')])).toBe(true);
+      expect(isValidMakeupDays([day('mk-a', '2026-09-20'), day('mk-a', '2026-09-21')])).toBe(false); // 重复 id
+      expect(isValidMakeupDays([day('mk-a', '2026-09-20'), day('mk-b', '2026-09-20')])).toBe(false); // 重复 date
+    });
+
+    it('isValidMakeupDays 拒绝解析不出节次的 period（如 "abc"，否则 ICS 导出被静默跳过）', () => {
+      const mk = period => [{
+        id: 'mk-p', date: '2026-09-20', name: '', status: 'confirmed', copyFrom: null,
+        courses: [{ name: '虚构手工课', period }]
+      }];
+      expect(isValidMakeupDays(mk('1-2'))).toBe(true);
+      expect(isValidMakeupDays(mk('第3节'))).toBe(true);
+      expect(isValidMakeupDays(mk('abc'))).toBe(false);
+      expect(isValidMakeupDays(mk('0'))).toBe(false);
+      expect(isValidMakeupDays(mk('1-'))).toBe(false);
+    });
   });
 
   describe('PUT /api/schedule/makeup-days', () => {
@@ -117,6 +136,24 @@ describe('调休补课日', () => {
       await request(app)
         .put('/api/schedule/makeup-days')
         .send({ password: 'test123', makeupDays: 'not-an-array' })
+        .expect(400);
+    });
+
+    it('重复日期或解析不出节次的课程应返回 400', async () => {
+      const day = (id, date) => ({ id, date, name: '', status: 'pending', copyFrom: null, courses: [] });
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({ password: 'test123', makeupDays: [day('mk-a', '2026-09-20'), day('mk-b', '2026-09-20')] })
+        .expect(400);
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({
+          password: 'test123',
+          makeupDays: [{
+            id: 'mk-c', date: '2026-09-22', name: '', status: 'confirmed', copyFrom: null,
+            courses: [{ name: '虚构手工课', period: 'abc' }]
+          }]
+        })
         .expect(400);
     });
 
@@ -231,6 +268,22 @@ describe('调休补课日', () => {
       expect(MakeupDays.copyCoursesForMakeupDay({ friday: [] }, 'sunday')).toEqual([]);
       expect(MakeupDays.copyCoursesForMakeupDay(null, 'monday')).toEqual([]);
       expect(MakeupDays.copyCoursesForMakeupDay({ monday: [] }, 'monday')).toEqual([]);
+    });
+
+    it('复制时保留 customStart/customEnd（自定义上下课时间属于当天课程属性）', () => {
+      const courses = {
+        monday: [{ id: 'src-c', name: '虚构烘焙体验', period: '1', customStart: '14:30', customEnd: '16:10' }],
+        tuesday: [{ id: 'src-n', name: '虚构收纳整理', period: '2' }],
+        wednesday: [],
+        thursday: [],
+        friday: []
+      };
+      const withCustom = MakeupDays.copyCoursesForMakeupDay(courses, 'monday');
+      expect(withCustom[0].customStart).toBe('14:30');
+      expect(withCustom[0].customEnd).toBe('16:10');
+      const withoutCustom = MakeupDays.copyCoursesForMakeupDay(courses, 'tuesday');
+      expect(withoutCustom[0].customStart).toBeUndefined();
+      expect(withoutCustom[0].customEnd).toBeUndefined();
     });
 
     it('createMakeupDay 默认 pending、copyFrom 为 null、courses 为空', () => {

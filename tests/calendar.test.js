@@ -18,7 +18,7 @@ process.env.SEMESTER_START = '2026-08-31';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
-const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine } = require('../src/server/server');
+const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, slotOfFirstPeriod, slotOfActualStartMinutes } = require('../src/server/server');
 
 const seedData = {
   name: 'ICS测试班',
@@ -412,6 +412,84 @@ describe('buildCalendarIcs 时段汇总提醒（独立汇总事件）', () => {
     const unfolded = ics.replace(/\r\n /g, '');
     expect(unfolded).toContain(`DESCRIPTION:${'超长的中文课程名称'.repeat(8)} 08:00-09:40 @${'教学楼机房'.repeat(6)}\\n${'另一门超长课程名字'.repeat(8)} 09:50-11:30 @${'教学楼'.repeat(6)}`);
     expect(countOccurrences(unfolded, 'TRIGGER:PT0M')).toBe(1);
+  });
+});
+
+describe('时段归属：大节次与自定义时间', () => {
+  it('slotOfFirstPeriod：节次 ≥10 一律归晚上（14-20 不再返回 null）', () => {
+    expect(slotOfFirstPeriod(1)).toBe('morning');
+    expect(slotOfFirstPeriod(5)).toBe('morning');
+    expect(slotOfFirstPeriod(6)).toBe('afternoon');
+    expect(slotOfFirstPeriod(9)).toBe('afternoon');
+    expect(slotOfFirstPeriod(10)).toBe('evening');
+    expect(slotOfFirstPeriod(13)).toBe('evening');
+    expect(slotOfFirstPeriod(14)).toBe('evening');
+    expect(slotOfFirstPeriod(20)).toBe('evening');
+  });
+
+  it('第 14 节的课程也生成晚上时段汇总事件（此前 slot 为 null 被跳过）', () => {
+    const settings14 = [
+      { startTime: '08:00', duration: 45 }, { startTime: '08:55', duration: 45 },
+      { startTime: '09:50', duration: 45 }, { startTime: '10:45', duration: 45 },
+      { startTime: '11:40', duration: 45 }, { startTime: '14:00', duration: 45 },
+      { startTime: '14:55', duration: 45 }, { startTime: '15:50', duration: 45 },
+      { startTime: '16:45', duration: 45 }, { startTime: '18:00', duration: 45 },
+      { startTime: '18:55', duration: 45 }, { startTime: '19:50', duration: 45 },
+      { startTime: '20:45', duration: 45 }, { startTime: '21:40', duration: 45 }
+    ];
+    const ics = buildCalendarIcs({
+      name: '大节次班', semesterStart: '2026-08-31', totalWeeks: 1,
+      periodSettings: settings14,
+      courses: {
+        monday: [{ name: '虚构夜间实验', period: '14' }],
+        tuesday: [], wednesday: [], thursday: [], friday: []
+      }
+    });
+    expect(ics).toContain('SUMMARY:📋 晚上：虚构夜间实验');
+    // 汇总事件时间 = 21:40 - 60 分钟
+    expect(ics).toContain('DTSTART;TZID=Asia/Shanghai:20260831T204000');
+  });
+
+  it('slotOfActualStartMinutes：按 periodSettings 边界节次开始时间划分，缺失时回退 12:00/18:00', () => {
+    const settings = [
+      { startTime: '08:00', duration: 45 }, { startTime: '08:55', duration: 45 },
+      { startTime: '09:50', duration: 45 }, { startTime: '10:45', duration: 45 },
+      { startTime: '11:40', duration: 45 }, { startTime: '14:00', duration: 45 },
+      { startTime: '14:55', duration: 45 }, { startTime: '15:50', duration: 45 },
+      { startTime: '16:45', duration: 45 }, { startTime: '18:00', duration: 45 }
+    ];
+    expect(slotOfActualStartMinutes(8 * 60 + 30, settings)).toBe('morning');
+    expect(slotOfActualStartMinutes(14 * 60 + 30, settings)).toBe('afternoon');
+    expect(slotOfActualStartMinutes(19 * 60, settings)).toBe('evening');
+    // periodSettings 缺失时回退固定钟点
+    expect(slotOfActualStartMinutes(11 * 60, [])).toBe('morning');
+    expect(slotOfActualStartMinutes(13 * 60, [])).toBe('afternoon');
+    expect(slotOfActualStartMinutes(18 * 60, undefined)).toBe('evening');
+  });
+
+  it('自定义时间生效时按实际开始时间归时段：period 为 1 但 14:30 上课的课计入下午汇总', () => {
+    const ics = buildCalendarIcs({
+      name: '自定义时段班', semesterStart: '2026-08-31', totalWeeks: 1,
+      periodSettings: [
+        { startTime: '08:00', duration: 45 }, { startTime: '08:55', duration: 45 },
+        { startTime: '09:50', duration: 45 }, { startTime: '10:45', duration: 45 },
+        { startTime: '11:40', duration: 45 }, { startTime: '14:00', duration: 45 },
+        { startTime: '14:55', duration: 45 }, { startTime: '15:50', duration: 45 },
+        { startTime: '16:45', duration: 45 }, { startTime: '18:00', duration: 45 }
+      ],
+      courses: {
+        monday: [
+          { name: '虚构晨练打卡', period: '1' },
+          { name: '虚构午后工坊', period: '1', customStart: '14:30', customEnd: '16:10' }
+        ],
+        tuesday: [], wednesday: [], thursday: [], friday: []
+      }
+    });
+    const unfolded = ics.replace(/\r\n /g, '');
+    expect(unfolded).toContain('SUMMARY:📋 上午：虚构晨练打卡');
+    expect(unfolded).toContain('SUMMARY:📋 下午：虚构午后工坊');
+    // 自定义时间的课不出现在上午汇总里
+    expect(unfolded).not.toContain('SUMMARY:📋 上午：虚构晨练打卡、虚构午后工坊');
   });
 });
 

@@ -46,3 +46,55 @@ describe('只读入口与设置保存的前端逻辑', () => {
     expect(saveSettingsBody[0]).toContain('updateDate()');
   });
 });
+
+describe('备份导出与课程编辑器的前端逻辑', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'js', 'schedule.js'),
+    'utf8'
+  );
+  const html = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'index.html'),
+    'utf8'
+  );
+
+  it('exportData() 备份包含 announcements 与 makeupDays（导入端依赖这两字段恢复）', () => {
+    const exportBody = script.match(/function exportData\(\) \{[\s\S]*?\n    \}/);
+    expect(exportBody).not.toBeNull();
+    expect(exportBody[0]).toContain('announcements');
+    expect(exportBody[0]).toContain('makeupDays');
+  });
+
+  it('课程编辑器提供自定义上下课时间输入框', () => {
+    expect(html).toContain('id="courseCustomStart"');
+    expect(html).toContain('id="courseCustomEnd"');
+  });
+
+  it('saveCourse() 校验并写入 customStart/customEnd（成对填写、结束晚于开始）', () => {
+    const saveBody = script.match(/async function saveCourse\(\) \{[\s\S]*?\n    \}/);
+    expect(saveBody).not.toBeNull();
+    expect(saveBody[0]).toContain("getElementById('courseCustomStart')");
+    expect(saveBody[0]).toContain("getElementById('courseCustomEnd')");
+    expect(saveBody[0]).toContain('course.customStart = customStart');
+    expect(saveBody[0]).toContain('course.customEnd = customEnd');
+  });
+
+  it('editCourse() 回填已有 customStart/customEnd，编辑保存不丢值', () => {
+    const editBody = script.match(/function editCourse\(id\) \{[\s\S]*?\n    \}/);
+    expect(editBody).not.toBeNull();
+    expect(editBody[0]).toContain('c.customStart');
+    expect(editBody[0]).toContain('c.customEnd');
+  });
+
+  it('openModal() 新建课程时清空自定义时间输入框', () => {
+    const openBody = script.match(/function openModal\(\) \{[\s\S]*?\n    \}/);
+    expect(openBody).not.toBeNull();
+    expect(openBody[0]).toContain("getElementById('courseCustomStart').value = ''");
+    expect(openBody[0]).toContain("getElementById('courseCustomEnd').value = ''");
+  });
+
+  it('ICS 订阅说明与实际提醒一致：自适应提醒 + 时段汇总预告，不再写固定提前 15 分钟', () => {
+    expect(html).not.toContain('提前 15 分钟');
+    expect(html).toContain('提前 30 分钟');
+    expect(html).toContain('60 分钟');
+  });
+});
