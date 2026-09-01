@@ -85,6 +85,11 @@ function isValidCourse(course) {
   if (course.endWeek !== undefined && course.endWeek !== null && (!Number.isInteger(course.endWeek) || course.endWeek < 1 || course.endWeek > 30)) return false;
   if (course.startWeek !== undefined && course.startWeek !== null && course.endWeek !== undefined && course.endWeek !== null && course.startWeek > course.endWeek) return false;
   if (course.weekType !== undefined && course.weekType !== null && !['all', 'odd', 'even'].includes(course.weekType)) return false;
+  if (course.customStart !== undefined && course.customStart !== null && parseCustomTimeHM(course.customStart) === null) return false;
+  if (course.customEnd !== undefined && course.customEnd !== null && parseCustomTimeHM(course.customEnd) === null) return false;
+  const customStartMin = parseCustomTimeHM(course.customStart);
+  const customEndMin = parseCustomTimeHM(course.customEnd);
+  if (customStartMin !== null && customEndMin !== null && customEndMin <= customStartMin) return false;
   return true;
 }
 
@@ -125,6 +130,26 @@ function isValidMakeupDays(arr) {
 function parsePositivePeriodNumber(value) {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : 0;
+}
+
+// 自定义上课时间："HH:MM" 字符串 → 当天分钟数；格式非法（含时>23/分>59）返回 null
+function parseCustomTimeHM(value) {
+  if (typeof value !== 'string') return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+// course.customStart / course.customEnd 同时存在且 end > start 时返回当天分钟数对，
+// 供 ICS 导出直接用作事件起止时间（替代 periodSettings 推导）；否则返回 null 回退原逻辑
+function getCustomCourseTimes(course) {
+  const startMin = parseCustomTimeHM(course && course.customStart);
+  const endMin = parseCustomTimeHM(course && course.customEnd);
+  if (startMin === null || endMin === null || endMin <= startMin) return null;
+  return { startMin, endMin };
 }
 
 function getMaxPeriodNumber(period) {
@@ -898,15 +923,24 @@ function buildCalendarIcs(schedule) {
         if (Number.isInteger(course.skipWeek) && course.skipWeek === week) continue;
         const periods = parsePeriodNumbers(course.period);
         if (periods.length === 0) continue;
-        const first = periodSettings[periods[0] - 1];
-        const last = periodSettings[periods[periods.length - 1] - 1];
-        if (!first || !last) continue;
-        const [sh, sm] = first.startTime.split(':').map(Number);
-        const [eh, em] = last.startTime.split(':').map(Number);
-        const start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, sh, sm);
-        if (!start) continue;
-        const endBase = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, eh, em);
-        const end = new Date(endBase.getTime() + (Number(last.duration) || 45) * 60000);
+        const custom = getCustomCourseTimes(course);
+        let start, end;
+        if (custom) {
+          // 自定义时间优先：直接用 customStart/customEnd，不查 periodSettings
+          start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, Math.floor(custom.startMin / 60), custom.startMin % 60);
+          if (!start) continue;
+          end = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, Math.floor(custom.endMin / 60), custom.endMin % 60);
+        } else {
+          const first = periodSettings[periods[0] - 1];
+          const last = periodSettings[periods[periods.length - 1] - 1];
+          if (!first || !last) continue;
+          const [sh, sm] = first.startTime.split(':').map(Number);
+          const [eh, em] = last.startTime.split(':').map(Number);
+          start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, sh, sm);
+          if (!start) continue;
+          const endBase = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, eh, em);
+          end = new Date(endBase.getTime() + (Number(last.duration) || 45) * 60000);
+        }
         const holiday = ScheduleHolidays.getHolidayInfo(start);
         if (holiday && holiday.type === 'holiday') continue;
         const uid = `sw-${crypto.createHash('sha1').update([
@@ -946,16 +980,23 @@ function buildCalendarIcs(schedule) {
     for (const course of dayCourses) {
       const periods = parsePeriodNumbers(course.period);
       if (periods.length === 0) continue;
-      const first = periodSettings[periods[0] - 1];
-      const last = periodSettings[periods[periods.length - 1] - 1];
-      if (!first || !last) continue;
-      const [sh, sm] = first.startTime.split(':').map(Number);
-      const [eh, em] = last.startTime.split(':').map(Number);
+      const custom = getCustomCourseTimes(course);
       const start = new Date(baseDate.getTime());
-      start.setHours(sh, sm, 0, 0);
       const end = new Date(baseDate.getTime());
-      end.setHours(eh, em, 0, 0);
-      end.setTime(end.getTime() + (Number(last.duration) || 45) * 60000);
+      if (custom) {
+        // 自定义时间优先：直接用 customStart/customEnd，不查 periodSettings、不加 duration
+        start.setHours(Math.floor(custom.startMin / 60), custom.startMin % 60, 0, 0);
+        end.setHours(Math.floor(custom.endMin / 60), custom.endMin % 60, 0, 0);
+      } else {
+        const first = periodSettings[periods[0] - 1];
+        const last = periodSettings[periods[periods.length - 1] - 1];
+        if (!first || !last) continue;
+        const [sh, sm] = first.startTime.split(':').map(Number);
+        const [eh, em] = last.startTime.split(':').map(Number);
+        start.setHours(sh, sm, 0, 0);
+        end.setHours(eh, em, 0, 0);
+        end.setTime(end.getTime() + (Number(last.duration) || 45) * 60000);
+      }
       // UID 稳定：由补课日期 + 课程信息哈希而成，同一补课日重复导出不变
       const uid = `swm-${crypto.createHash('sha1').update([
         day.date, course.name, course.period, course.location || '', course.teacher || ''
