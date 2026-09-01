@@ -14,6 +14,9 @@ services:
     container_name: class-schedule
     ports:
       - "${HOST_PORT:-30080}:3000"
+      # 公网只读入口（可选）：在 .env 中设置 READONLY_PORT=3001 后取消下一行注释。
+      # 只绑定本机回环，由 nginx/caddy 反代到公网；注意容器内端口需与 READONLY_PORT 一致。
+      # - "127.0.0.1:30081:3001"
     volumes:
       - "${DATA_PATH:-./data}:/data"
     environment:
@@ -24,6 +27,10 @@ services:
       - EDIT_PASSWORD=${EDIT_PASSWORD-__AUTO_GENERATE__}
       - PRINT_EDIT_PASSWORD=${PRINT_EDIT_PASSWORD:-true}
       - SEMESTER_START=${SEMESTER_START:-2026-03-01}
+      # 公网只读入口端口（可选；须与主端口 3000 不同，留空表示关闭）。
+      - READONLY_PORT=${READONLY_PORT:-}
+      # ICP 备案号（可选；设置后页脚/只读页展示，留空表示不展示）。
+      - ICP_NUMBER=${ICP_NUMBER:-}
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
       - PUBLIC_PATH=/app/public
