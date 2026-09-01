@@ -79,6 +79,9 @@ function isValidCourse(course) {
   if (course.location !== undefined && course.location !== null && (typeof course.location !== 'string' || course.location.length > 100)) return false;
   if (course.teacher !== undefined && course.teacher !== null && (typeof course.teacher !== 'string' || course.teacher.length > 50)) return false;
   if (typeof course.period !== 'string' || !course.period.trim() || course.period.length > 20) return false;
+  // 节次必须能解析出至少一个节次编号（如 "1-2"、"3"、"第1-2节"）；
+  // 否则 ICS 导出时会被静默跳过，持久化前直接拒绝。
+  if (getMaxPeriodNumber(course.period) === 0) return false;
   if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
   if (course.skipWeek !== undefined && course.skipWeek !== null && (!Number.isInteger(course.skipWeek) || course.skipWeek < 1 || course.skipWeek > 30)) return false;
   if (course.startWeek !== undefined && course.startWeek !== null && (!Number.isInteger(course.startWeek) || course.startWeek < 1 || course.startWeek > 30)) return false;
@@ -124,7 +127,16 @@ function isValidMakeupDay(day) {
 
 function isValidMakeupDays(arr) {
   if (!Array.isArray(arr) || arr.length > 50) return false;
-  return arr.every(isValidMakeupDay);
+  // 前端假设一个日期只有一条补课记录，id 也需唯一，重复即拒绝
+  const ids = new Set();
+  const dates = new Set();
+  for (const day of arr) {
+    if (!isValidMakeupDay(day)) return false;
+    if (ids.has(day.id) || dates.has(day.date)) return false;
+    ids.add(day.id);
+    dates.add(day.date);
+  }
+  return true;
 }
 
 function parsePositivePeriodNumber(value) {
@@ -858,13 +870,30 @@ function isCourseActiveInWeek(course, week, totalWeeks) {
 const ICS_DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
 const ICS_DAY_NAMES = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
 
-// 时段划分（按节次）：上午 1-5、下午 6-9、晚上 10-13
+// 时段划分（按节次）：上午 1-5、下午 6-9、晚上 10 及以后
 const ICS_SLOT_LABELS = { morning: '上午', afternoon: '下午', evening: '晚上' };
 function slotOfFirstPeriod(firstPeriod) {
   if (firstPeriod >= 1 && firstPeriod <= 5) return 'morning';
   if (firstPeriod >= 6 && firstPeriod <= 9) return 'afternoon';
-  if (firstPeriod >= 10 && firstPeriod <= 13) return 'evening';
+  // 13 节以后的节次（14-20 等）也归晚上，不再返回 null 导致无时段汇总
+  if (firstPeriod >= 10) return 'evening';
   return null;
+}
+
+// customStart/customEnd 生效时按实际开始时间归时段：以 periodSettings 中时段边界节次
+// （下午从第 6 节、晚上从第 10 节开始，与 slotOfFirstPeriod 的名义划分一致）的开始时间
+// 作为分界；设置缺失或非法时回退固定钟点（12:00 / 18:00）。
+function slotOfActualStartMinutes(startMin, periodSettings) {
+  const boundaryStart = (periodNumber, fallbackMin) => {
+    const p = Array.isArray(periodSettings) ? periodSettings[periodNumber - 1] : null;
+    const parsed = p ? parseCustomTimeHM(p.startTime) : null;
+    return parsed === null ? fallbackMin : parsed;
+  };
+  const eveningStart = boundaryStart(10, 18 * 60);
+  const afternoonStart = boundaryStart(6, 12 * 60);
+  if (startMin >= eveningStart) return 'evening';
+  if (startMin >= afternoonStart) return 'afternoon';
+  return 'morning';
 }
 
 // 汇总事件标题：「📋 上午：高等数学、体育理论」——时段名 + 该时段全部课程名
@@ -962,7 +991,8 @@ function buildCalendarIcs(schedule) {
           dayKey: `w${week}-${day}`,
           start: start.getTime(),
           end: end.getTime(),
-          slot: slotOfFirstPeriod(periods[0]),
+          // 自定义时间生效时按实际开始时间归时段，否则按名义首节次
+          slot: custom ? slotOfActualStartMinutes(custom.startMin, periodSettings) : slotOfFirstPeriod(periods[0]),
           name: course.name,
           descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
           lines: eventLines
@@ -1018,7 +1048,8 @@ function buildCalendarIcs(schedule) {
         dayKey: `m-${day.date}`,
         start: start.getTime(),
         end: end.getTime(),
-        slot: slotOfFirstPeriod(periods[0]),
+        // 自定义时间生效时按实际开始时间归时段，否则按名义首节次
+        slot: custom ? slotOfActualStartMinutes(custom.startMin, periodSettings) : slotOfFirstPeriod(periods[0]),
         name: course.name,
         descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
         lines: eventLines
@@ -1216,6 +1247,14 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
           enabled: typeof a.enabled === 'boolean' ? a.enabled : true
         }));
       }
+      // makeupDays：备份导出包含该字段，导入时整体校验（含重复 id/日期、课程节次可解析）后恢复；
+      // 结构非法直接 400，不静默丢弃
+      if (migratedData.makeupDays !== undefined && migratedData.makeupDays !== null) {
+        if (!isValidMakeupDays(migratedData.makeupDays)) {
+          throw new HttpError(400, 'Invalid makeupDays');
+        }
+        newSchedule.makeupDays = migratedData.makeupDays;
+      }
       newSchedule.updatedAt = new Date().toISOString();
       await saveSchedule(newSchedule);
     });
@@ -1336,7 +1375,7 @@ function createReadonlyApp() {
 }
 
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, createReadonlyApp, resolveReadonlyListenPort };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, slotOfFirstPeriod, slotOfActualStartMinutes, createReadonlyApp, resolveReadonlyListenPort };
 
 if (require.main === module) {
   init().then(() => {
