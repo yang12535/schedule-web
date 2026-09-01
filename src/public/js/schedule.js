@@ -258,13 +258,36 @@
       return ps.length > 1 ? `第${ps[0]}-${ps[ps.length - 1]}节` : `第${ps[0]}节`;
     }
 
-    function getTimeText(p) {
-      const ps = parsePeriods(p);
-      if (!ps.length) return '';
+    // "HH:MM" → 当天分钟数；非法（含时>23/分>59）返回 null
+    function parseTimeHM(value) {
+      if (typeof value !== 'string') return null;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+      if (!m) return null;
+      const h = +m[1], min = +m[2];
+      if (h > 23 || min > 59) return null;
+      return h * 60 + min;
+    }
+
+    // 课程实际起止时间（当天分钟数）：customStart/customEnd 同时合法且 end>start 时优先采用，
+    // 否则按节次从 periodSettings 推导；都无法确定时返回 null。
+    // renderSchedule、当前课程、下一课卡片等所有消费方统一走这里，保证自定义时间处处生效。
+    function getCourseTimeRange(c) {
+      if (!c || typeof c !== 'object') return null;
+      const cs = parseTimeHM(c.customStart), ce = parseTimeHM(c.customEnd);
+      if (cs !== null && ce !== null && ce > cs) return { startMin: cs, endMin: ce };
+      const ps = parsePeriods(c.period);
+      if (ps.length === 0) return null;
       const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
-      if (!first || !last) return '';
-      const end = (([h,m]) => formatClockTime(+h*60 + +m + last.duration))(last.startTime.split(':'));
-      return `${first.startTime}-${end}`;
+      if (!first || !last) return null;
+      const startMin = parseTimeHM(first.startTime), lastStart = parseTimeHM(last.startTime);
+      if (startMin === null || lastStart === null) return null;
+      return { startMin, endMin: lastStart + (Number(last.duration) || 45) };
+    }
+
+    function getTimeText(c) {
+      const range = getCourseTimeRange(c);
+      if (!range) return '';
+      return `${formatClockTime(range.startMin)}-${formatClockTime(range.endMin)}`;
     }
 
     function isCurrentCourse(c) {
@@ -274,12 +297,9 @@
       const today = new Date().getDay();
       if (today === 0 || today === 6) return false;
       const now = new Date().getHours() * 60 + new Date().getMinutes();
-      const ps = parsePeriods(c.period);
-      if (ps.length === 0) return false;
-      const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
-      if (!first || !last) return false;
-      return now >= (+first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1]) && 
-             now < (+last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration);
+      const range = getCourseTimeRange(c);
+      if (!range) return false;
+      return now >= range.startMin && now < range.endMin;
     }
 
     // 获取当前正在上的课程
@@ -297,14 +317,10 @@
       for (const c of courses) {
         if (!isActiveInWeek(c, week)) continue;
         if (isSkippedInWeek(c, week)) continue;
-        const ps = parsePeriods(c.period);
-        if (ps.length === 0) continue;
-        const first = periodSettings[ps[0]-1], last = periodSettings[ps[ps.length - 1]-1];
-        if (!first || !last) continue;
-        const startMin = +first.startTime.split(':')[0]*60 + +first.startTime.split(':')[1];
-        const endMin = +last.startTime.split(':')[0]*60 + +last.startTime.split(':')[1] + last.duration;
-        if (now >= startMin && now < endMin) {
-          return {...c, dayName: dayNames[todayKey], startMin, endMin, remaining: endMin - now};
+        const range = getCourseTimeRange(c);
+        if (!range) continue;
+        if (now >= range.startMin && now < range.endMin) {
+          return {...c, dayName: dayNames[todayKey], startMin: range.startMin, endMin: range.endMin, remaining: range.endMin - now};
         }
       }
       return null;
@@ -352,7 +368,11 @@
         html += `<div class="empty-state"><div class="empty-state-icon">📚</div><p>${isEditMode ? '暂无课程' : '今日无课'}</p></div>`;
       } else {
         const week = getCurrentWeek() + currentWeekOffset;
-        [...courses].sort((a,b) => (parsePeriods(a.period)[0]||0) - (parsePeriods(b.period)[0]||0)).forEach(c => {
+        [...courses].sort((a,b) => {
+          // 按实际上课时间排序：有自定义时间的课程按 customStart 归位
+          const ra = getCourseTimeRange(a), rb = getCourseTimeRange(b);
+          return (ra ? ra.startMin : 0) - (rb ? rb.startMin : 0);
+        }).forEach(c => {
           const isActive = isActiveInWeek(c, week);
           if (!isActive) return;
           const isSkipWeek = isSkippedInWeek(c, week);
@@ -361,7 +381,7 @@
           // 修复：使用 escapeHtml 防止 XSS
           html += `
             <div class="${courseClass}">
-              <div class="course-time"><span class="period">${escapeHtml(formatPeriod(c.period))}</span><span class="time">${escapeHtml(getTimeText(c.period))}</span></div>
+              <div class="course-time"><span class="period">${escapeHtml(formatPeriod(c.period))}</span><span class="time">${escapeHtml(getTimeText(c))}</span></div>
               <div class="course-info" data-type="${escapeAttr(c.type||'')}">
                 <div class="course-name">${escapeHtml(c.name)}${c.isMakeup?'<span class="makeup-badge">补课</span>':''}${isCurrent?' <span style="color:#FF6B6B;font-size:12px;">· 进行中</span>':''}</div>
                 <div class="course-meta">${c.location?escapeHtml(`📍${c.location}`):''}${c.teacher?escapeHtml(` | 👤${c.teacher}`):''}</div>
@@ -382,15 +402,13 @@
       const courses = [];
       dayOrder.forEach((day, i) => {
         (schedule.courses[day] || []).forEach(c => {
-          const ps = parsePeriods(c.period);
-          if (ps.length === 0) return;
-          const setting = periodSettings[ps[0]-1];
-          if (!setting) return;
-          const [h, m] = setting.startTime.split(':');
+          const range = getCourseTimeRange(c);
+          if (!range) return;
+          const h = Math.floor(range.startMin / 60), m = range.startMin % 60;
           for (let courseWeek = Math.max(1, week); courseWeek <= totalWeeks; courseWeek++) {
             if (!isActiveInWeek(c, courseWeek)) continue;
             if (isSkippedInWeek(c, courseWeek)) continue;
-            const candidateTime = getAcademicDate(schedule.semesterStart, courseWeek, i, +h, +m);
+            const candidateTime = getAcademicDate(schedule.semesterStart, courseWeek, i, h, m);
             if (candidateTime && candidateTime > now) {
               courses.push({...c, dayName: dayNames[day], time: candidateTime, week: courseWeek});
               break;
@@ -443,7 +461,7 @@
           
           let html = `<div class="next-course-title">⏰ 下一节课</div>`;
           html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
-          html += `<div class="next-course-info">${isSameDate(next.time, new Date()) ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
+          html += `<div class="next-course-info">${isSameDate(next.time, new Date()) ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
           html += `<div class="next-course-countdown" style="color:#FF6B6B;">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
           // 小字显示当前课即将结束
           html += `<div class="next-course-secondary">${escapeHtml(current.name)} · 剩余${formatRemaining(current.remaining)}下课</div>`;
@@ -453,7 +471,7 @@
           const titleText = '当前课程';
           let html = `<div class="next-course-title">📚 ${titleText}</div>`;
           html += `<div class="next-course-name">${escapeHtml(current.name)} · 剩余${formatRemaining(current.remaining)}</div>`;
-          html += `<div class="next-course-info">📍${escapeHtml(current.location||'暂无地点')} ${escapeHtml(getTimeText(current.period))}</div>`;
+          html += `<div class="next-course-info">📍${escapeHtml(current.location||'暂无地点')} ${escapeHtml(getTimeText(current))}</div>`;
           
           if (next) {
             const diff = next.time - new Date();
@@ -477,7 +495,7 @@
         
         let html = `<div class="next-course-title">${isNextWeek ? '📅 下一周课程' : '⏰ 下一节课'}</div>`;
         html += `<div class="next-course-name">${escapeHtml(next.name)}</div>`;
-        html += `<div class="next-course-info">${isNextWeek ? `第${next.week}周 · ` : ''}${isToday ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next.period))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
+        html += `<div class="next-course-info">${isNextWeek ? `第${next.week}周 · ` : ''}${isToday ? '今天' : escapeHtml(next.dayName)} ${escapeHtml(getTimeText(next))} | 📍${escapeHtml(next.location||'暂无地点')}</div>`;
         html += `<div class="next-course-countdown">${diffMins > 0 ? `还有${formatRemaining(diffMins)}` : '即将开始'}</div>`;
         content.innerHTML = html;
         return;
@@ -1261,7 +1279,7 @@
           [...dayCourses].sort((a, b) => (parsePeriods(a.period)[0] || 0) - (parsePeriods(b.period)[0] || 0)).forEach(c => {
             html += `
             <div class="makeup-course-row">
-              <span class="makeup-course-time">${escapeHtml(formatPeriod(c.period))} ${escapeHtml(getTimeText(c.period))}</span>
+              <span class="makeup-course-time">${escapeHtml(formatPeriod(c.period))} ${escapeHtml(getTimeText(c))}</span>
               <span class="makeup-course-name">${escapeHtml(c.name)}</span>
               <span class="makeup-course-meta">${c.teacher ? escapeHtml(`👤${c.teacher}`) : ''}${c.location ? escapeHtml(` 📍${c.location}`) : ''}</span>
             </div>`;
@@ -1333,6 +1351,10 @@
           <input type="text" class="form-input makeup-row-teacher" placeholder="教师" value="${escapeAttr(c.teacher || '')}">
           <input type="text" class="form-input makeup-row-location" placeholder="地点" value="${escapeAttr(c.location || '')}">
         </div>
+        <div class="form-row" style="margin-top: 8px;">
+          <input type="time" class="form-input makeup-row-custom-start" title="自定义上课时间（可选）" value="${escapeAttr(c.customStart || '')}">
+          <input type="time" class="form-input makeup-row-custom-end" title="自定义下课时间（可选）" value="${escapeAttr(c.customEnd || '')}">
+        </div>
         <button type="button" class="row-del" data-action="makeup-remove-row">删除本条</button>`;
       container.appendChild(row);
     }
@@ -1377,13 +1399,30 @@
           const period = row.querySelector('.makeup-row-period').value.trim();
           if (!name && !period) continue; // 跳过全空行
           if (!name || !period) return showToast('请填写课名和节次', 'error');
-          if (!parsePeriods(period).length) return showToast('节次格式不正确，例如：1-2 或 3', 'error');
-          courses.push({
+          const parsedRowPeriods = parsePeriods(period);
+          if (!parsedRowPeriods.length) return showToast('节次格式不正确，例如：1-2 或 3', 'error');
+          if (parsedRowPeriods.some(p => p > totalPeriods)) return showToast(`节次应在 1-${totalPeriods} 范围内`, 'error');
+          // 自定义上下课时间（可选）：与普通课程编辑器一致，两个都填才生效且结束须晚于开始；
+          // 编辑已有课程时输入框已回填，保存不会丢 customStart/customEnd
+          const customStart = row.querySelector('.makeup-row-custom-start').value;
+          const customEnd = row.querySelector('.makeup-row-custom-end').value;
+          if ((customStart && !customEnd) || (!customStart && customEnd)) {
+            return showToast('自定义上下课时间需同时填写或同时留空', 'error');
+          }
+          if (customStart && customEnd && customEnd <= customStart) {
+            return showToast('自定义下课时间必须晚于上课时间', 'error');
+          }
+          const rowCourse = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
             name, period,
             teacher: row.querySelector('.makeup-row-teacher').value.trim(),
             location: row.querySelector('.makeup-row-location').value.trim()
-          });
+          };
+          if (customStart && customEnd) {
+            rowCourse.customStart = customStart;
+            rowCourse.customEnd = customEnd;
+          }
+          courses.push(rowCourse);
         }
         if (!courses.length) return showToast('请至少添加一条课程', 'error');
       }

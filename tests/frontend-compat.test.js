@@ -98,3 +98,64 @@ describe('备份导出与课程编辑器的前端逻辑', () => {
     expect(html).toContain('60 分钟');
   });
 });
+
+describe('自定义上下课时间的前端消费（getCourseTimeRange 统一解析）', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'js', 'schedule.js'),
+    'utf8'
+  );
+
+  it('存在统一的课程实际起止时间解析函数：合法 custom 优先，否则 periodSettings 推导', () => {
+    const body = script.match(/function getCourseTimeRange\(c\) \{[\s\S]*?\n    \}/);
+    expect(body).not.toBeNull();
+    expect(body[0]).toContain('c.customStart');
+    expect(body[0]).toContain('c.customEnd');
+    expect(body[0]).toContain('ce > cs');
+    expect(body[0]).toContain('periodSettings');
+  });
+
+  it('renderSchedule / isCurrentCourse / getCurrentCourse / findNextCourse 统一走解析函数', () => {
+    for (const fn of ['isCurrentCourse', 'getCurrentCourse', 'findNextCourse', 'renderSchedule']) {
+      const body = script.match(new RegExp(`function ${fn}\\([^)]*\\) \\{[\\s\\S]*?\\n    \\}`));
+      expect(body).not.toBeNull();
+      expect(body[0]).toContain('getCourseTimeRange');
+    }
+  });
+
+  it('时间文本按课程对象解析：课表条目与下一课卡片都认自定义时间', () => {
+    const timeText = script.match(/function getTimeText\(c\) \{[\s\S]*?\n    \}/);
+    expect(timeText).not.toBeNull();
+    expect(timeText[0]).toContain('getCourseTimeRange(c)');
+    const update = script.match(/function updateNextCourse\(\) \{[\s\S]*?\n    \}/);
+    expect(update).not.toBeNull();
+    expect(update[0]).toContain('getTimeText(next)');
+    expect(update[0]).toContain('getTimeText(current)');
+    expect(update[0]).not.toContain('getTimeText(next.period)');
+  });
+});
+
+describe('补课日课程编辑的自定义时间与节次范围', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'js', 'schedule.js'),
+    'utf8'
+  );
+
+  it('补课课程行提供自定义上下课时间输入框并回填已有值（编辑不再丢 custom 字段）', () => {
+    const body = script.match(/function addMakeupCourseRow\(course\) \{[\s\S]*?\n    \}/);
+    expect(body).not.toBeNull();
+    expect(body[0]).toContain('makeup-row-custom-start');
+    expect(body[0]).toContain('makeup-row-custom-end');
+    expect(body[0]).toContain('c.customStart');
+    expect(body[0]).toContain('c.customEnd');
+  });
+
+  it('saveMakeupCourses 校验并保留 customStart/customEnd，且校验节次范围', () => {
+    const body = script.match(/async function saveMakeupCourses\(\) \{[\s\S]*?\n    \}/);
+    expect(body).not.toBeNull();
+    expect(body[0]).toContain('makeup-row-custom-start');
+    expect(body[0]).toContain('makeup-row-custom-end');
+    expect(body[0]).toContain('rowCourse.customStart = customStart');
+    expect(body[0]).toContain('rowCourse.customEnd = customEnd');
+    expect(body[0]).toContain('p > totalPeriods');
+  });
+});
