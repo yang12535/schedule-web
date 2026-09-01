@@ -14,8 +14,10 @@ describe('校历/节假日表', () => {
     expect(getHolidayInfo('2027-01-01')).toMatchObject({ type: 'holiday', name: '元旦' });
   });
 
-  it('调休上班日返回 workday', () => {
-    expect(getHolidayInfo('2026-09-20')).toMatchObject({ type: 'workday', name: '中秋节调休' });
+  it('调休上班日返回 workday（2026 官方安排：9/20 与 10/10 均为国庆调休）', () => {
+    // 依据国办发明电〔2025〕7号：中秋节 9/25-27 放假不调休；
+    // 国庆节 10/1-7 放假调休，9月20日（周日）、10月10日（周六）上班
+    expect(getHolidayInfo('2026-09-20')).toMatchObject({ type: 'workday', name: '国庆节调休' });
     expect(getHolidayInfo('2026-10-10')).toMatchObject({ type: 'workday', name: '国庆节调休' });
   });
 
