@@ -182,9 +182,41 @@
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     
+    /* ICP 备案页脚 */
+    .icp-footer { text-align: center; padding: 8px 12px 24px; font-size: 12px; color: var(--gray-400); }
+    .icp-footer a { color: var(--gray-400); text-decoration: none; }
+
+    /* 节假日标注 */
+    .holiday-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; }
+    .workday-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; }
+    .holiday-notice { background: #FFF7ED; border: 1px solid #FED7AA; color: #C2410C; border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
+    .holiday-notice.workday { background: #FFFBEB; border-color: #FDE68A; color: #B45309; }
+    .ics-link-input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 12px; color: var(--gray-600); background: var(--gray-50); word-break: break-all; }
+
     .period-setting { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
     .period-setting label { width: 50px; font-size: 13px; color: var(--gray-600); }
     .period-setting input { padding: 8px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 13px; }
+
+    /* 调休补课日（「班」日） */
+    .makeup-days { padding-top: 0; }
+    .makeup-days-title { font-size: 15px; font-weight: 700; color: var(--gray-900); margin: 4px 0 10px; }
+    .makeup-day-card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 14px 16px; margin-bottom: 12px; border-left: 4px solid #F59E0B; }
+    .makeup-day-card.pending { border-left-color: var(--gray-400); }
+    .makeup-day-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .makeup-day-title { font-size: 15px; font-weight: 600; }
+    .makeup-day-sub { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
+    .makeup-day-badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; }
+    .makeup-day-badge.confirmed { background: #FEF3C7; color: #D97706; }
+    .makeup-day-badge.pending { background: var(--gray-100); color: var(--gray-600); }
+    .makeup-course-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px dashed var(--gray-200); font-size: 13px; }
+    .makeup-course-time { color: var(--gray-600); white-space: nowrap; }
+    .makeup-course-name { font-weight: 600; flex: 1; }
+    .makeup-course-meta { color: var(--gray-400); font-size: 12px; white-space: nowrap; }
+    .makeup-day-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .makeup-day-actions button { padding: 6px 12px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; background: var(--primary-light); color: var(--primary); }
+    .makeup-day-actions button.danger { background: #FEE2E2; color: #DC2626; }
+    .makeup-course-form-row { border: 1px solid var(--gray-200); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+    .makeup-course-form-row .row-del { margin-top: 8px; border: none; background: #FEE2E2; color: #DC2626; border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -203,7 +235,10 @@
           <span class="week-badge" id="weekDisplay">第1周</span>
           <button class="week-btn" onclick="changeWeek(1)">></button>
         </div>
-        <div style="font-size: 12px; color: var(--gray-400);" id="currentDate"></div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="font-size: 12px; color: var(--gray-400);" id="currentDate"></div>
+          <button class="toolbar-btn" id="icsBtn" onclick="openIcsModal()" style="padding: 4px 10px; font-size: 12px;">📅 订阅日历</button>
+        </div>
       </div>
     </div>
 
@@ -228,6 +263,11 @@
     <div class="content" id="scheduleContent">
       <div class="loading">加载中...</div>
     </div>
+
+    <!-- 调休补课日（「班」日）区块 -->
+    <div class="content makeup-days" id="makeupDaysSection" style="display: none;"></div>
+
+    <div class="icp-footer" id="icpFooter" style="display: none;"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" id="icpNumberLink"></a></div>
   </div>
 
   <!-- Course Modal -->
@@ -257,6 +297,13 @@
           <div class="form-group">
             <label class="form-label">节次</label>
             <input type="text" class="form-input" id="coursePeriod" placeholder="例如：1-2">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">自定义上下课时间（可选，留空则按节次时间）</label>
+          <div class="form-row">
+            <input type="time" class="form-input" id="courseCustomStart">
+            <input type="time" class="form-input" id="courseCustomEnd">
           </div>
         </div>
         <div class="form-group">
@@ -439,6 +486,87 @@
     </div>
   </div>
 
+  <!-- ICS 订阅 Modal -->
+  <div class="modal-overlay" id="icsModal">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title">📅 订阅日历</h3>
+        <button class="modal-close" onclick="closeIcsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--gray-600); margin-bottom: 12px;">把下面的链接添加到手机日历（iOS：设置 → 日历 → 账户 → 添加已订阅的日历；Android/电脑：日历应用的「通过 URL 订阅」），课表会按学期自动展开。提醒为自适应：课间 ≥30 分钟时提前 30 分钟提醒，短课间在上一节下课时提醒；另外每个时段（上午/下午/晚上）开课前 60 分钟会推送当天该时段的课程汇总预告。</p>
+        <input type="text" class="ics-link-input" id="icsLinkInput" readonly onclick="this.select()">
+        <p style="font-size: 12px; color: var(--gray-400); margin-top: 10px;">节假日当天不生成课程事件；课程变动后日历会在下次刷新时自动更新。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeIcsModal()">关闭</button>
+        <button class="btn btn-primary" onclick="copyIcsLink()">复制链接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增补课日 Modal -->
+  <div class="modal-overlay" id="makeupDayModal">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title">🛠️ 新增补课日</h3>
+        <button class="modal-close" onclick="closeMakeupDayModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">补课日期 *</label>
+          <input type="date" class="form-input" id="makeupDayDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label">名称（选填）</label>
+          <input type="text" class="form-input" id="makeupDayName" placeholder="例如：中秋节调休">
+        </div>
+        <p style="font-size: 12px; color: var(--gray-400);">新建后标记为「待添加」，等学校通知补哪天的课后再补充课程。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeMakeupDayModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveMakeupDay()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 补课日课程 Modal -->
+  <div class="modal-overlay" id="makeupCoursesModal">
+    <div class="modal" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="makeupCoursesTitle">添加课程</h3>
+        <button class="modal-close" onclick="closeMakeupCoursesModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">课程来源</label>
+          <select class="form-select" id="makeupCoursesMode">
+            <option value="copy">复制平时某天的课程</option>
+            <option value="custom">自建课程</option>
+          </select>
+        </div>
+        <div class="form-group" id="makeupCopyGroup">
+          <label class="form-label">复制周几的课</label>
+          <select class="form-select" id="makeupCopyFrom">
+            <option value="monday">周一</option>
+            <option value="tuesday">周二</option>
+            <option value="wednesday">周三</option>
+            <option value="thursday">周四</option>
+            <option value="friday">周五</option>
+          </select>
+        </div>
+        <div id="makeupCustomGroup" style="display: none;">
+          <div id="makeupCourseRows"></div>
+          <button class="add-btn" type="button" onclick="addMakeupCourseRow()">+ 添加一条课程</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeMakeupCoursesModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveMakeupCourses()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <input type="file" id="fileInput" style="display: none;" accept=".json" onchange="importData(this)">
   <div class="toast" id="toast"></div>
 
@@ -447,6 +575,8 @@
   </div>
 
   <script src="js/date-utils.js"></script>
+  <script src="js/holidays.js"></script>
+  <script src="js/makeup-days.js"></script>
   <script src="js/schedule.js"></script>
 </body>
 </html>

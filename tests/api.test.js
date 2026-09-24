@@ -461,7 +461,7 @@ describe('Schedule API', () => {
         .send(payload)
         .expect(400);
 
-      expect(res.body.error).toBe('Invalid totalPeriods');
+      expect(res.body.error).toBe('Invalid courses structure'); // 9/1 起结构校验前置，异常 period 范围在结构阶段即拒绝（仍是 400，不展开）
     });
 
     it.each([
