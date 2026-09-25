@@ -247,6 +247,29 @@
     .makeup-course-form-row { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
     .makeup-course-form-row .row-del { margin-top: 8px; border: none; background: #FEE2E2; color: #DC2626; border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 
+    /* 调休有效期队列：分组标题 / 倒计时 chip / 过期警示 / 过期归档折叠组 */
+    .makeup-group-title { font-size: 12px; font-weight: 600; color: var(--text-3); margin: 12px 0 8px; }
+    .makeup-group-title.warn { color: #DC2626; }
+    .makeup-day-badges { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .makeup-day-chip { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; }
+    .makeup-day-chip.today { background: #FFE8E8; color: #FF6B6B; }
+    .makeup-day-chip.soon { background: #FEF3C7; color: #D97706; }
+    .makeup-day-chip.future, .makeup-day-chip.expired { background: var(--surface-2); color: var(--text-2); }
+    .makeup-day-badge.expired-pending { background: #FEE2E2; color: #DC2626; }
+    .makeup-day-card.expired-pending { border-left-color: #DC2626; }
+    .makeup-expired-group { margin-bottom: 12px; }
+    .makeup-expired-group summary { cursor: pointer; font-size: 13px; color: var(--text-3); padding: 6px 0; user-select: none; }
+
+    /* 顶部调休横幅：复用 .holiday-notice/.notice-chip，.makeup 变体常驻于 day-tabs 之下 */
+    .makeup-banner { padding: 12px 16px 0; }
+    .holiday-notice.makeup { background: #EFF6FF; border-color: #BFDBFE; color: #1D4ED8; margin-bottom: 0; cursor: pointer; }
+    .holiday-notice.makeup .notice-chip { background: #DBEAFE; color: #1D4ED8; }
+    .holiday-notice.makeup.warn { background: #FFFBEB; border-color: #FDE68A; color: #B45309; }
+    .holiday-notice.makeup.warn .notice-chip { background: #FEF3C7; color: #D97706; }
+
+    /* 公告管理列表：已过期徽标（沉底+降透明度，复用 .announcement-badge 红色徽章） */
+    .ann-list-item.expired { border-left-color: var(--gray-400); opacity: 0.75; }
+
     /* 深色模式：只覆盖语义变量与少数硬编码浅色块，组件无需分别适配 */
     @media (prefers-color-scheme: dark) {
       :root {
@@ -286,6 +309,14 @@
       .holiday-notice.workday { background: rgba(180,83,9,0.14); border-color: rgba(253,230,138,0.20); color: #E8C468; }
       .notice-chip { background: rgba(220,38,38,0.24); color: #F08C8C; }
       .holiday-notice.workday .notice-chip { background: rgba(217,119,6,0.22); color: #E8B95F; }
+      .holiday-notice.makeup { background: rgba(59,130,246,0.14); border-color: rgba(147,197,253,0.22); color: #93C5FD; }
+      .holiday-notice.makeup .notice-chip { background: rgba(59,130,246,0.22); color: #93C5FD; }
+      .holiday-notice.makeup.warn { background: rgba(180,83,9,0.14); border-color: rgba(253,230,138,0.20); color: #E8C468; }
+      .holiday-notice.makeup.warn .notice-chip { background: rgba(217,119,6,0.22); color: #E8B95F; }
+      .makeup-day-chip.today { background: rgba(255,107,107,0.18); color: #FF8F8F; }
+      .makeup-day-chip.soon { background: rgba(217,119,6,0.20); color: #E8B95F; }
+      .makeup-day-badge.expired-pending { background: rgba(220,38,38,0.20); color: #F08C8C; }
+      .makeup-group-title.warn { color: #F08C8C; }
       .toolbar-btn.danger, .mode-badge.edit, .ann-btn-del,
       .makeup-day-actions button.danger, .makeup-course-form-row .row-del { background: rgba(220,38,38,0.18); color: #F08C8C; border-color: transparent; }
     }
@@ -331,6 +362,9 @@
       <button class="day-tab" data-day="thursday"><span class="day-label">周四</span><span class="day-number">--</span></button>
       <button class="day-tab" data-day="friday"><span class="day-label">周五</span><span class="day-number">--</span></button>
     </div>
+
+    <!-- 调休补课横幅：常驻（按今天推导，不随浏览周切换），临近/当天有补课日时由 JS 填充 -->
+    <div class="makeup-banner" id="makeupBanner" style="display: none;"></div>
 
     <div class="content" id="scheduleContent">
       <div class="loading">加载中...</div>

@@ -57,5 +57,56 @@
     };
   }
 
-  return { WEEKDAYS, WEEKDAY_NAMES, copyCoursesForMakeupDay, createMakeupDay };
+  // ===== 有效期队列分组（纯展示层推导，不改动数据、不影响 ICS） =====
+  // 临期阈值：距今天 ≤3 天算「临近」；过期 = 日期早于今天。
+  const MAKEUP_SOON_DAYS = 3;
+
+  // 严格解析 'YYYY-MM-DD'（排除 2026-02-30 之类的假日期），非法返回 null
+  function parseMakeupDate(dateStr) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof dateStr === 'string' ? dateStr : '');
+    if (!m) return null;
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return { y, mo, d };
+  }
+
+  // dateStr 相对 todayStr 的天数差（0=今天，>0 未来，<0 已过期）；任一非法返回 null
+  function diffMakeupDays(dateStr, todayStr) {
+    const a = parseMakeupDate(dateStr), b = parseMakeupDate(todayStr);
+    if (!a || !b) return null;
+    return Math.round((Date.UTC(a.y, a.mo - 1, a.d) - Date.UTC(b.y, b.mo - 1, b.d)) / 86400000);
+  }
+
+  // 分组：today（今天）/ soon（临近 ≤MAKEUP_SOON_DAYS 天）/ future（更远）/
+  // expiredPending / expiredConfirmed / invalid（日期非法，兜底防渲染丢数据）。
+  // 过期 pending 不归档：它意味着学校没通知/管理员忘排课，是需要处理的信号；
+  // 过期 confirmed 仅供归档折叠。todayStr 非法时所有条目落入 invalid。
+  // 组内排序：today/soon/future 按日期升序，两个过期组按日期降序（离今天最近的在前）。
+  // 纯函数：不修改入参，分组内引用原对象。
+  function classifyMakeupDays(days, todayStr) {
+    const groups = { today: [], soon: [], future: [], expiredPending: [], expiredConfirmed: [], invalid: [] };
+    if (!Array.isArray(days)) return groups;
+    days.forEach(day => {
+      const diff = day && typeof day === 'object' ? diffMakeupDays(day.date, todayStr) : null;
+      if (diff === null) { groups.invalid.push(day); return; }
+      if (diff === 0) { groups.today.push(day); return; }
+      if (diff > 0) {
+        (diff <= MAKEUP_SOON_DAYS ? groups.soon : groups.future).push(day);
+        return;
+      }
+      (day.status === 'confirmed' ? groups.expiredConfirmed : groups.expiredPending).push(day);
+    });
+    const byDateAsc = (a, b) => String(a.date).localeCompare(String(b.date));
+    const byDateDesc = (a, b) => String(b.date).localeCompare(String(a.date));
+    groups.today.sort(byDateAsc);
+    groups.soon.sort(byDateAsc);
+    groups.future.sort(byDateAsc);
+    groups.expiredPending.sort(byDateDesc);
+    groups.expiredConfirmed.sort(byDateDesc);
+    return groups;
+  }
+
+  return { WEEKDAYS, WEEKDAY_NAMES, copyCoursesForMakeupDay, createMakeupDay, MAKEUP_SOON_DAYS, diffMakeupDays, classifyMakeupDays };
 }));

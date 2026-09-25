@@ -6,7 +6,8 @@
     const dayNames = { monday: '周一', tuesday: '周二', wednesday: '周三', thursday: '周四', friday: '周五' };
     const { getAcademicWeek, getAcademicDate, parseLocalDate } = window.ScheduleDateUtils;
     const { getHolidayInfo, toDateStr } = window.ScheduleHolidays || {};
-    const { copyCoursesForMakeupDay, createMakeupDay } = window.ScheduleMakeupDays || {};
+    const { copyCoursesForMakeupDay, createMakeupDay, classifyMakeupDays, diffMakeupDays, MAKEUP_SOON_DAYS } = window.ScheduleMakeupDays || {};
+    const SOON_DAYS = typeof MAKEUP_SOON_DAYS === 'number' ? MAKEUP_SOON_DAYS : 3;
     const defaultPeriods = [{startTime:'08:00',duration:45},{startTime:'08:55',duration:45},{startTime:'10:00',duration:45},{startTime:'10:55',duration:45},{startTime:'14:00',duration:45},{startTime:'14:55',duration:45},{startTime:'16:00',duration:45},{startTime:'16:55',duration:45},{startTime:'19:00',duration:45},{startTime:'19:55',duration:45},{startTime:'20:50',duration:45},{startTime:'21:45',duration:45}];
     let periodSettings = [...defaultPeriods];
     let settingsPeriodDraft = null;
@@ -1224,16 +1225,21 @@
         container.innerHTML = '<div style="text-align:center;color:var(--gray-400);padding:20px;">暂无公告</div>';
         return;
       }
-      annListCache = list;
-      container.innerHTML = list.map(a => {
+      // 有效期队列：已过期（截止日早于今天）的沉底并打「已过期」徽标，未过期保持服务端原顺序
+      const todayStr = typeof toDateStr === 'function' ? toDateStr(new Date()) : null;
+      const isAnnExpired = a => !!(todayStr && a.endDate && String(a.endDate) < todayStr);
+      const sorted = [...list].sort((a, b) => Number(isAnnExpired(a)) - Number(isAnnExpired(b)));
+      annListCache = sorted;
+      container.innerHTML = sorted.map(a => {
         const range = [];
         if (a.startDate) range.push(a.startDate);
         if (a.endDate) range.push(a.endDate);
         const rangeStr = range.length ? range.join(' ~ ') : '永久有效';
         const isEnabled = a.enabled !== false;
+        const expired = isAnnExpired(a);
         return `
-          <div class="ann-list-item ${isEnabled ? '' : 'disabled'}">
-            <div class="ann-list-title">${escapeHtml(a.title)} ${isEnabled ? '' : '<span style="color:var(--gray-400);">(已禁用)</span>'}</div>
+          <div class="ann-list-item ${isEnabled ? '' : 'disabled'}${expired ? ' expired' : ''}">
+            <div class="ann-list-title">${escapeHtml(a.title)} ${isEnabled ? '' : '<span style="color:var(--gray-400);">(已禁用)</span>'}${expired ? '<span class="announcement-badge">已过期</span>' : ''}</div>
             <div class="ann-list-meta">${escapeHtml(rangeStr)}</div>
             <div class="ann-list-actions">
               <button class="ann-btn-edit" data-id="${escapeAttr(a.id)}" data-action="edit">编辑</button>
@@ -1341,33 +1347,74 @@
       }
       if (days.length) {
         html += `<div class="makeup-days-title">🛠️ 调休补课</div>`;
+        // 有效期队列：今天 → 临近 → 之后 → 已过期未排课（警示常驻）→ 已过期已排课（折叠归档）
+        const todayStr = typeof toDateStr === 'function' ? toDateStr(new Date()) : null;
+        const groups = typeof classifyMakeupDays === 'function'
+          ? classifyMakeupDays(days, todayStr)
+          : { today: [], soon: [], future: [...days], expiredPending: [], expiredConfirmed: [], invalid: [] };
+        [
+          { key: 'today', title: '📍 今天' },
+          { key: 'soon', title: `临近（${SOON_DAYS} 天内）` },
+          { key: 'future', title: '之后的补课日' },
+          { key: 'invalid', title: '' }
+        ].forEach(g => {
+          if (!groups[g.key].length) return;
+          if (g.title) html += `<div class="makeup-group-title">${g.title}</div>`;
+          groups[g.key].forEach(day => { html += renderMakeupDayCard(day, canEdit, todayStr); });
+        });
+        // 过期 pending 不归档：它意味着学校没通知/管理员忘排课，警示徽章常驻
+        if (groups.expiredPending.length) {
+          html += `<div class="makeup-group-title warn">⚠️ 已过期 · 未排课</div>`;
+          groups.expiredPending.forEach(day => { html += renderMakeupDayCard(day, canEdit, todayStr); });
+        }
+        // 过期 confirmed 归档折叠（默认收起），组内编辑/改回待添加/删除操作仍可达
+        if (groups.expiredConfirmed.length) {
+          html += `<details class="makeup-expired-group"><summary>已过期 · 已排课（${groups.expiredConfirmed.length}）</summary>`;
+          groups.expiredConfirmed.forEach(day => { html += renderMakeupDayCard(day, canEdit, todayStr); });
+          html += `</details>`;
+        }
       }
-      [...days].sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).forEach(day => {
-        const info = makeupDateInfo(day.date);
-        const confirmed = day.status === 'confirmed';
-        const badge = confirmed
-          ? '<span class="makeup-day-badge confirmed">已排课</span>'
-          : '<span class="makeup-day-badge pending">待通知</span>';
-        const subParts = [];
-        if (day.name) subParts.push(day.name);
-        if (confirmed && day.copyFrom) subParts.push(`补${dayNames[day.copyFrom] || ''}的课`);
-        html += `
-          <div class="makeup-day-card ${confirmed ? '' : 'pending'}">
+      section.innerHTML = html;
+      section.style.display = html ? 'block' : 'none';
+      renderMakeupBanner();
+    }
+
+    // 单个补课日卡片：徽章行 = 倒计时 chip（今天/N天后/已过期）+ 状态徽章
+    function renderMakeupDayCard(day, canEdit, todayStr) {
+      const info = makeupDateInfo(day.date);
+      const confirmed = day.status === 'confirmed';
+      const diff = typeof diffMakeupDays === 'function' ? diffMakeupDays(day.date, todayStr) : null;
+      const expired = diff !== null && diff < 0;
+      let chip = '';
+      if (diff === 0) chip = '<span class="makeup-day-chip today">今天</span>';
+      else if (diff !== null && diff > 0) chip = `<span class="makeup-day-chip ${diff <= SOON_DAYS ? 'soon' : 'future'}">${diff}天后</span>`;
+      else if (expired && confirmed) chip = '<span class="makeup-day-chip expired">已过期</span>';
+      // 过期 pending 不单独放 chip：状态徽章本身即「已过期·待通知」警示
+      const badge = confirmed
+        ? '<span class="makeup-day-badge confirmed">已排课</span>'
+        : (expired
+          ? '<span class="makeup-day-badge expired-pending">已过期·待通知</span>'
+          : '<span class="makeup-day-badge pending">待通知</span>');
+      const subParts = [];
+      if (day.name) subParts.push(day.name);
+      if (confirmed && day.copyFrom) subParts.push(`补${dayNames[day.copyFrom] || ''}的课`);
+      let html = `
+          <div class="makeup-day-card ${confirmed ? '' : 'pending'}${!confirmed && expired ? ' expired-pending' : ''}">
             <div class="makeup-day-header">
               <div>
                 <div class="makeup-day-title">${escapeHtml(info.label)}<span class="makeup-day-week">${escapeHtml(info.weekName)}</span></div>
                 ${subParts.length ? `<div class="makeup-day-sub">${escapeHtml(subParts.join(' · '))}</div>` : ''}
               </div>
-              ${badge}
+              <div class="makeup-day-badges">${chip}${badge}</div>
             </div>`;
-        if (confirmed) {
-          const dayCourses = Array.isArray(day.courses) ? day.courses : [];
-          html += `<div class="makeup-course-list">`;
-          [...dayCourses].sort((a, b) => (parsePeriods(a.period)[0] || 0) - (parsePeriods(b.period)[0] || 0)).forEach(c => {
-            const metaParts = [];
-            if (c.teacher) metaParts.push(`👤${c.teacher}`);
-            if (c.location) metaParts.push(`📍${c.location}`);
-            html += `
+      if (confirmed) {
+        const dayCourses = Array.isArray(day.courses) ? day.courses : [];
+        html += `<div class="makeup-course-list">`;
+        [...dayCourses].sort((a, b) => (parsePeriods(a.period)[0] || 0) - (parsePeriods(b.period)[0] || 0)).forEach(c => {
+          const metaParts = [];
+          if (c.teacher) metaParts.push(`👤${c.teacher}`);
+          if (c.location) metaParts.push(`📍${c.location}`);
+          html += `
             <div class="makeup-course-row">
               <div class="makeup-course-time"><span class="mc-period">${escapeHtml(formatPeriod(c.period))}</span><span class="mc-time">${escapeHtml(getTimeText(c))}</span></div>
               <div class="makeup-course-info">
@@ -1375,26 +1422,59 @@
                 ${metaParts.length ? `<div class="makeup-course-meta">${escapeHtml(metaParts.join(' · '))}</div>` : ''}
               </div>
             </div>`;
-          });
-          html += `</div>`;
-        } else {
-          html += `<div class="makeup-day-empty">等待学校通知补哪天的课，排课后此处显示当天课程</div>`;
-        }
-        if (canEdit) {
-          html += `<div class="makeup-day-actions">`;
-          if (confirmed) {
-            html += `<button data-action="makeup-edit-courses" data-id="${escapeAttr(day.id)}">编辑课程</button>`;
-            html += `<button data-action="makeup-revert" data-id="${escapeAttr(day.id)}">改回待添加</button>`;
-          } else {
-            html += `<button data-action="makeup-add-courses" data-id="${escapeAttr(day.id)}">添加课程</button>`;
-          }
-          html += `<button class="danger" data-action="makeup-delete" data-id="${escapeAttr(day.id)}">删除</button>`;
-          html += `</div>`;
-        }
+        });
         html += `</div>`;
+      } else {
+        html += `<div class="makeup-day-empty">${expired ? '⚠️ 补课日已过，一直未排课（学校未通知或漏排）；确定不再补课后可删除' : '等待学校通知补哪天的课，排课后此处显示当天课程'}</div>`;
+      }
+      if (canEdit) {
+        html += `<div class="makeup-day-actions">`;
+        if (confirmed) {
+          html += `<button data-action="makeup-edit-courses" data-id="${escapeAttr(day.id)}">编辑课程</button>`;
+          html += `<button data-action="makeup-revert" data-id="${escapeAttr(day.id)}">改回待添加</button>`;
+        } else {
+          html += `<button data-action="makeup-add-courses" data-id="${escapeAttr(day.id)}">添加课程</button>`;
+        }
+        html += `<button class="danger" data-action="makeup-delete" data-id="${escapeAttr(day.id)}">删除</button>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    // 顶部调休横幅：常驻（按「今天 vs 补课日」推导，不随浏览周切换），只读公网入口同样展示。
+    // 覆盖 今天+临近 的补课日，补课日过后自动消失（过期分组不进横幅）；多条合并为一条；
+    // 点击横幅锚点滚动到调休区块。挂点：renderMakeupDays 尾部（init/60s 重渲/saveMakeupDays 全经过）。
+    function renderMakeupBanner() {
+      const el = document.getElementById('makeupBanner');
+      if (!el) return;
+      const todayStr = typeof toDateStr === 'function' ? toDateStr(new Date()) : null;
+      let active = [];
+      if (todayStr && typeof classifyMakeupDays === 'function') {
+        const groups = classifyMakeupDays(getMakeupDays(), todayStr);
+        active = [...groups.today, ...groups.soon];
+      }
+      if (!active.length) {
+        el.innerHTML = '';
+        el.style.display = 'none';
+        return;
+      }
+      const hasPending = active.some(d => d.status !== 'confirmed');
+      const segs = active.map(d => {
+        const info = makeupDateInfo(d.date);
+        const when = d.date === todayStr ? `今天（${info.weekName}）` : `${info.label}（${info.weekName}）`;
+        return d.status === 'confirmed'
+          ? `${when}补课${d.copyFrom ? `·补${dayNames[d.copyFrom] || ''}的课` : ''}`
+          : `${when}有补课，课程待通知`;
       });
-      section.innerHTML = html;
-      section.style.display = html ? 'block' : 'none';
+      const text = segs.length === 1 ? segs[0] : `${segs.length} 个补课日临近：${segs.join('；')}`;
+      el.innerHTML = `<div class="holiday-notice makeup${hasPending ? ' warn' : ''}" onclick="scrollToMakeupSection()" title="点击查看调休安排"><span class="notice-chip">班</span><span>${escapeHtml(text)}</span></div>`;
+      el.style.display = 'block';
+    }
+
+    function scrollToMakeupSection() {
+      const section = document.getElementById('makeupDaysSection');
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function openMakeupDayModal() {

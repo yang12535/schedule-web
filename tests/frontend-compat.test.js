@@ -47,6 +47,56 @@ describe('Layout contract', () => {
   });
 });
 
+describe('Makeup validity queue UI (M35)', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'js', 'schedule.js'),
+    'utf8'
+  );
+  const makeupJs = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'js', 'makeup-days.js'),
+    'utf8'
+  );
+  const html = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'index.html'),
+    'utf8'
+  );
+
+  it('classifyMakeupDays lives in makeup-days.js (UMD) with an exported soon-days constant', () => {
+    expect(makeupJs).toContain('function classifyMakeupDays(days, todayStr)');
+    expect(makeupJs).toContain('MAKEUP_SOON_DAYS = 3');
+    expect(makeupJs).toContain('classifyMakeupDays');
+    expect(script).toContain('classifyMakeupDays');
+  });
+
+  it('renders grouped queue with countdown chips and the expired-confirmed fold', () => {
+    expect(script).toContain('makeup-day-chip');
+    expect(script).toContain('makeup-expired-group');
+    expect(script).toContain('expired-pending');
+    expect(html).toContain('.makeup-day-chip');
+    expect(html).toContain('.makeup-expired-group');
+    expect(html).toContain('.makeup-day-badge.expired-pending');
+  });
+
+  it('has a persistent top banner container between day-tabs and scheduleContent', () => {
+    expect(html).toContain('id="makeupBanner"');
+    expect(html).toContain('.holiday-notice.makeup');
+    expect(script).toContain('function renderMakeupBanner()');
+    expect(script).toContain('scrollToMakeupSection');
+    // 容器位置契约：day-tabs 之下、scheduleContent 之外（之前）
+    const tabsIdx = html.indexOf('id="dayTabs"');
+    const bannerIdx = html.indexOf('id="makeupBanner"');
+    const contentIdx = html.indexOf('id="scheduleContent"');
+    expect(tabsIdx).toBeGreaterThanOrEqual(0);
+    expect(bannerIdx).toBeGreaterThan(tabsIdx);
+    expect(contentIdx).toBeGreaterThan(bannerIdx);
+  });
+
+  it('marks expired announcements in the manage list', () => {
+    expect(script).toContain('announcement-badge">已过期');
+    expect(script).toContain('isAnnExpired');
+  });
+});
+
 describe('Course id fallback guards (M30)', () => {
   const script = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'public', 'js', 'schedule.js'),
