@@ -576,7 +576,10 @@ async function loadSchedule() {
     scheduleCache = {...createDefaultSchedule(), ...data, periodSettings: data.periodSettings || JSON.parse(JSON.stringify(defaultPeriods))};
     scheduleCacheMtime = stat ? stat.mtimeMs : null;
     // 历史数据 id 回填：落盘持久化一次，之后加载命中已回填数据即不再变化（幂等）。
-    // 落盘失败（如只读挂载）不阻塞读取——内存中已是回填结果，下次加载会重试
+    // 落盘失败（如只读挂载）不阻塞读取——内存中已是回填结果，下次加载会重试。
+    // 已知限制：此落盘在无锁读路径上，与并发写请求存在理论毫秒级 lost-update 窗口
+    // （每份旧数据生命周期仅一次、可自愈；不能套 withSaveLock——端点在锁内调
+    // loadSchedule 会自死锁），详见 docs/operations.md「课程 id 回填」
     if (ensureCourseIds(scheduleCache)) {
       try {
         await saveSchedule(scheduleCache);
