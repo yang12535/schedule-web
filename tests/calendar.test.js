@@ -74,6 +74,14 @@ function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
 }
 
+// 与 server.js formatIcsUtcDateTime 同一格式（UTC、秒位恒 "00"，分钟粒度）；
+// 测试里独立实现一份，顺带钉死该输出格式
+function icsUtcMinute(ms) {
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}00Z`;
+}
+
 describe('GET /api/calendar.ics', () => {
   beforeAll(async () => {
     await fs.mkdir(tmpDir, { recursive: true });
@@ -167,7 +175,7 @@ describe('GET /api/calendar.ics', () => {
   });
 
   describe('进程内 60s 缓存（review r1 P2-2）', () => {
-    it('TTL 内重复导出命中缓存（响应逐字节相同，含 DTSTAMP）', async () => {
+    it('TTL 内重复导出命中缓存（响应逐字节相同，含 DTSTAMP/LAST-MODIFIED）', async () => {
       const first = await request(app).get('/api/calendar.ics').expect(200);
       const second = await request(app).get('/api/calendar.ics').expect(200);
       expect(second.text).toBe(first.text);
@@ -193,6 +201,57 @@ describe('GET /api/calendar.ics', () => {
       const after = await request(app).get('/api/calendar.ics').expect(200);
       expect(after.text).toContain('SUMMARY:缓存失效验证课');
       expect(after.text).not.toBe(before.text);
+    });
+  });
+
+  // M34：DTSTAMP/LAST-MODIFIED 取数据文件 mtime（不再随缓存重建漂移），
+  // Last-Modified 响应头启用 If-Modified-Since 304，ETag 随输出稳定
+  describe('M34 稳定时间戳与条件请求', () => {
+    it('Last-Modified 头 = 数据文件 mtime；体内 DTSTAMP/LAST-MODIFIED 全同值且为其 UTC 分钟表示', async () => {
+      const res = await request(app).get('/api/calendar.ics').expect(200);
+      const stat = await fs.stat(process.env.DATA_FILE);
+      expect(res.headers['last-modified']).toBe(new Date(stat.mtimeMs).toUTCString());
+      const stampLines = res.text.split('\r\n').filter(l => l.startsWith('DTSTAMP:') || l.startsWith('LAST-MODIFIED:'));
+      expect(stampLines.length).toBeGreaterThan(0);
+      // 两类行都在（每个 VEVENT 各一条）
+      expect(new Set(stampLines.map(l => l.slice(0, l.indexOf(':'))))).toEqual(new Set(['DTSTAMP', 'LAST-MODIFIED']));
+      // 全部时间戳同值 = 文件 mtime 的分钟粒度 UTC
+      expect(new Set(stampLines.map(l => l.slice(l.indexOf(':') + 1)))).toEqual(new Set([icsUtcMinute(stat.mtimeMs)]));
+    });
+
+    it('数据变更落盘后修订时间戳跟随新 mtime 更新', async () => {
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({
+          password: 'test123',
+          makeupDays: [{
+            id: 'md-m34-bump',
+            date: '2026-11-21',
+            name: '',
+            status: 'confirmed',
+            copyFrom: null,
+            courses: [{ name: '时间戳更新验证课', period: '1' }]
+          }]
+        })
+        .expect(200);
+      const stat = await fs.stat(process.env.DATA_FILE);
+      const res = await request(app).get('/api/calendar.ics').expect(200);
+      expect(res.text).toContain('SUMMARY:时间戳更新验证课');
+      expect(res.headers['last-modified']).toBe(new Date(stat.mtimeMs).toUTCString());
+      const dtstamps = new Set(res.text.split('\r\n').filter(l => l.startsWith('DTSTAMP:')).map(l => l.slice('DTSTAMP:'.length)));
+      expect([...dtstamps]).toEqual([icsUtcMinute(stat.mtimeMs)]);
+    });
+
+    it('ETag 随数据稳定：If-None-Match 命中返回 304', async () => {
+      const first = await request(app).get('/api/calendar.ics').expect(200);
+      expect(first.headers['etag']).toBeTruthy();
+      await request(app).get('/api/calendar.ics').set('If-None-Match', first.headers['etag']).expect(304);
+    });
+
+    it('If-Modified-Since 命中 Last-Modified 返回 304', async () => {
+      const first = await request(app).get('/api/calendar.ics').expect(200);
+      expect(first.headers['last-modified']).toBeTruthy();
+      await request(app).get('/api/calendar.ics').set('If-Modified-Since', first.headers['last-modified']).expect(304);
     });
   });
 });
@@ -512,7 +571,7 @@ describe('ICS_SLOT_SUMMARY_ALARM（📋 汇总事件闹钟开关）', () => {
 
   const uidsOf = text => text.split('\r\n').filter(l => l.startsWith('UID:')).sort();
 
-  // 归一化：剥掉 DTSTAMP 与 📋 汇总事件内的 VALARM 块，用于两态输出逐字节对比
+  // 归一化：剥掉 DTSTAMP/LAST-MODIFIED 与 📋 汇总事件内的 VALARM 块，用于两态输出逐字节对比
   //（本组用例课名短，SUMMARY/VALARM DESCRIPTION 均不触发 75 字节折行）
   const normalize = text => {
     const out = [];
@@ -521,7 +580,7 @@ describe('ICS_SLOT_SUMMARY_ALARM（📋 汇总事件闹钟开关）', () => {
     for (const line of text.split('\r\n')) {
       if (line === 'BEGIN:VEVENT') inSummary = false;
       if (line.startsWith('SUMMARY:📋')) inSummary = true;
-      if (line.startsWith('DTSTAMP:')) continue;
+      if (line.startsWith('DTSTAMP:') || line.startsWith('LAST-MODIFIED:')) continue;
       if (inSummary && line === 'BEGIN:VALARM') { inValarm = true; continue; }
       if (inValarm) {
         if (line === 'END:VALARM') inValarm = false;
@@ -555,10 +614,10 @@ describe('ICS_SLOT_SUMMARY_ALARM（📋 汇总事件闹钟开关）', () => {
     expect(uidsOf(off).filter(u => u.startsWith('UID:sw-daily-'))).toHaveLength(2);
   });
 
-  it('开关 true 时与默认态输出的唯一差异是汇总事件的 VALARM 块（DTSTAMP 除外逐字节一致）', () => {
+  it('开关 true 时与默认态输出的唯一差异是汇总事件的 VALARM 块（DTSTAMP/LAST-MODIFIED 除外逐字节一致）', () => {
     const off = withAlarmSwitch(undefined, () => buildCalendarIcs(alarmSchedule()));
     const on = withAlarmSwitch('true', () => buildCalendarIcs(alarmSchedule()));
-    // 剥离「汇总事件 VALARM + DTSTAMP」后两态逐字节相同 → 开关不触碰其余任何输出
+    // 剥离「汇总事件 VALARM + 修订时间戳」后两态逐字节相同 → 开关不触碰其余任何输出
     expect(normalize(on)).toBe(normalize(off));
     // 开启后汇总事件恢复旧版完整 PT0M 闹钟（与现状逐字节一致的行为钉死）
     expect(countOccurrences(on, 'BEGIN:VALARM')).toBe(5); // 3 课程事件 + 2 汇总事件
@@ -566,6 +625,91 @@ describe('ICS_SLOT_SUMMARY_ALARM（📋 汇总事件闹钟开关）', () => {
     for (const line of ['BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:PT0M', 'DESCRIPTION:📋 上午：甲课、乙课', 'END:VALARM']) {
       expect(block).toContain(line);
     }
+  });
+});
+
+// M34：DTSTAMP 与每个 VEVENT 的 LAST-MODIFIED 统一取数据文件 mtime（路由处传
+// scheduleCacheMtime），不再随每次缓存重建漂移——漂移会让按 RFC 5546 §2.1.5 判修订的
+// 客户端把全部事件当成「有新修订」、提醒重发（HyperOS 超级岛刷屏根因，M32 调研）。
+// 数据不变时两次构建逐字节一致（ETag 随之稳定）；feed 不再带 METHOD（轮询订阅非 iTIP
+// 消息，且无 ORGANIZER 违反 RFC 5546 §3.2.1）。机制详见 docs/operations.md「HyperOS 超级岛」。
+describe('M34：DTSTAMP/LAST-MODIFIED 稳定化（数据文件 mtime）', () => {
+  const mtimeSchedule = () => ({
+    name: '稳定班',
+    semesterStart: '2026-08-31',
+    totalPeriods: 2,
+    totalWeeks: 2,
+    periodSettings: [
+      { startTime: '08:00', duration: 45 },
+      { startTime: '08:55', duration: 45 }
+    ],
+    courses: {
+      monday: [
+        { name: '锚点课', period: '1', teacher: '教师甲', location: 'A101' },
+        { name: '乙课', period: '2' }
+      ],
+      tuesday: [], wednesday: [], thursday: [], friday: []
+    },
+    makeupDays: [{
+      id: 'md-m34-1',
+      date: '2026-10-10',
+      name: '调休',
+      status: 'confirmed',
+      copyFrom: 'monday',
+      courses: [{ name: '补课锚', period: '1' }]
+    }]
+  });
+  const MTIME_A = Date.parse('2026-09-20T08:30:15.123Z'); // 秒/毫秒非零，验证分钟粒度截断
+  const MTIME_B = MTIME_A + 2 * 60 * 1000;
+  const uidsOf = text => text.split('\r\n').filter(l => l.startsWith('UID:')).sort();
+
+  it('同一数据同一 mtime 连续两次构建逐字节全等（含 DTSTAMP/LAST-MODIFIED）', () => {
+    const schedule = mtimeSchedule();
+    expect(buildCalendarIcs(schedule, MTIME_A)).toBe(buildCalendarIcs(schedule, MTIME_A));
+  });
+
+  it('每个 VEVENT 的 DTSTAMP 与 LAST-MODIFIED 同值，等于 mtime 的 UTC 分钟粒度表示', () => {
+    const ics = buildCalendarIcs(mtimeSchedule(), MTIME_A);
+    const expected = '20260920T083000Z'; // 秒/毫秒被截断
+    expect(icsUtcMinute(MTIME_A)).toBe(expected);
+    const vevents = countOccurrences(ics, 'BEGIN:VEVENT');
+    expect(vevents).toBeGreaterThan(0);
+    expect(countOccurrences(ics, `DTSTAMP:${expected}`)).toBe(vevents);
+    expect(countOccurrences(ics, `LAST-MODIFIED:${expected}`)).toBe(vevents);
+    for (const line of ics.split('\r\n')) {
+      if (line.startsWith('DTSTAMP:') || line.startsWith('LAST-MODIFIED:')) {
+        expect(line.endsWith(`:${expected}`)).toBe(true);
+      }
+    }
+  });
+
+  it('mtime 变化后修订时间戳随之更新，UID 集合不变（哈希输入不含时间戳）', () => {
+    const a = buildCalendarIcs(mtimeSchedule(), MTIME_A);
+    const b = buildCalendarIcs(mtimeSchedule(), MTIME_B);
+    expect(b).not.toContain(icsUtcMinute(MTIME_A));
+    expect(b).toContain(`DTSTAMP:${icsUtcMinute(MTIME_B)}`);
+    expect(b).toContain(`LAST-MODIFIED:${icsUtcMinute(MTIME_B)}`);
+    expect(uidsOf(b)).toEqual(uidsOf(a));
+  });
+
+  it('UID 锚点哈希与历史算法逐字节兼容（防回归：UID 不含时间戳/随机源）', () => {
+    const ics = buildCalendarIcs(mtimeSchedule(), MTIME_A);
+    expect(ics).toContain('UID:sw-327ed884b096413d07de@schedule-web'); // 锚点课 第1周
+    expect(ics).toContain('UID:sw-86ba3ce6d31624840122@schedule-web'); // 锚点课 第2周
+    expect(ics).toContain('UID:swm-9f09a4322996ee8aed28@schedule-web'); // 补课锚
+    expect(ics).toContain('UID:sw-daily-8e78b2e6afa96a2775c1@schedule-web'); // 第1周周一上午汇总
+    expect(ics).toContain('UID:sw-daily-5fc18861eebbc60e77be@schedule-web'); // 补课日上午汇总
+  });
+
+  it('feed 不含 METHOD 行（轮询订阅非 iTIP 消息）', () => {
+    const ics = buildCalendarIcs(mtimeSchedule(), MTIME_A);
+    expect(ics).not.toMatch(/^METHOD:/m);
+  });
+
+  it('mtime 缺省时回退为构建时刻（数据文件暂缺等边角，兼容旧调用方）', () => {
+    const ics = buildCalendarIcs(mtimeSchedule());
+    expect(ics).toMatch(/^DTSTAMP:\d{8}T\d{6}Z$/m);
+    expect(ics).toMatch(/^LAST-MODIFIED:\d{8}T\d{6}Z$/m);
   });
 });
 
@@ -616,15 +760,15 @@ describe('课程 id 回填（M30）', () => {
     ...schedule.makeupDays.flatMap(day => day.courses.map(c => c.id))
   ];
 
-  it('id 回填前后 ICS 输出逐字节一致（DTSTAMP 除外），UID 集合不变', () => {
+  it('id 回填前后 ICS 输出逐字节一致（DTSTAMP/LAST-MODIFIED 除外），UID 集合不变', () => {
     // UID 稳定性核查结论：sw-/swm-/sw-daily- UID 全部由课程内容哈希派生，不含 course.id，
     // 这里用逐字节对比钉死——回填绝不允许改变既有日历订阅的事件 UID
     const schedule = legacySchedule();
     const before = buildCalendarIcs(schedule);
     expect(ensureCourseIds(schedule)).toBe(true);
     const after = buildCalendarIcs(schedule);
-    const stripDtstamp = text => text.split('\r\n').filter(line => !line.startsWith('DTSTAMP:')).join('\r\n');
-    expect(stripDtstamp(after)).toBe(stripDtstamp(before));
+    const stripTimestamps = text => text.split('\r\n').filter(line => !line.startsWith('DTSTAMP:') && !line.startsWith('LAST-MODIFIED:')).join('\r\n');
+    expect(stripTimestamps(after)).toBe(stripTimestamps(before));
     const uids = text => text.split('\r\n').filter(line => line.startsWith('UID:'));
     expect(uids(after)).toEqual(uids(before));
   });

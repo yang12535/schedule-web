@@ -400,9 +400,10 @@ let scheduleCacheMtime = null;
 // 该接口是未授权公开动态接口，豁免通用限流后（M27 P2#13，防全班 NAT 轮询被 200/15min
 // 配额误伤）需要别的手段压住单源洪峰的 CPU 放大。订阅 URL 固定、无查询参数分桶，
 // 60s TTL 内重复轮询直接命中缓存；任何写操作成功落盘时失效（saveSchedule 是唯一
-// 写出口，见其中 icsCache = null）。缓存响应的 DTSTAMP 最多滞后 TTL 秒——日历客户端
-// 以 UID 判重，不受影响；外部手改数据文件的最坏可见滞后同样不超过 TTL。
-let icsCache = null; // { text: string, expiresAt: number }
+// 写出口，见其中 icsCache = null）。响应的 DTSTAMP/LAST-MODIFIED 取数据文件 mtime
+// （M34，见 buildCalendarIcs），数据不变时缓存重建前后输出逐字节一致；
+// 外部手改数据文件的最坏可见滞后不超过 TTL。
+let icsCache = null; // { text: string, expiresAt: number, lastModified: number|null }
 const ICS_CACHE_TTL_MS = 60 * 1000;
 
 app.use(express.json({ limit: '1mb' }));
@@ -1100,11 +1101,14 @@ function resolveCourseTimeRange(course, periods, periodSettings) {
 }
 
 // 课程 VEVENT 的属性行（不含 VALARM 与 END:VEVENT——闹钟在全天事件收齐后按课间隙
-// 统一计算，END 行也在那时补上，见 buildCalendarIcs 的 dayGroups 逻辑）
+// 统一计算，END 行也在那时补上，见 buildCalendarIcs 的 dayGroups 逻辑）。
+// DTSTAMP 与 LAST-MODIFIED 同值（均为数据文件 mtime，见 buildCalendarIcs）：feed 不带
+// METHOD 时 DTSTAMP 语义即「最后修订」（RFC 5545 §3.8.7.2），两者一致是 RFC 自洽的。
 function buildCourseEventLines({ uid, dtstamp, start, end, name, location, descLines }) {
   const lines = ['BEGIN:VEVENT'];
   lines.push(`UID:${uid}`);
   lines.push(`DTSTAMP:${dtstamp}`);
+  lines.push(`LAST-MODIFIED:${dtstamp}`);
   lines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(start)}`);
   lines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(end)}`);
   lines.push(`SUMMARY:${escapeIcsText(name)}`);
@@ -1122,18 +1126,24 @@ function buildSlotDescLine(name, start, end, location) {
 // 节假日（holidays.js 内置表）当天的事件跳过。
 // 调休补课日（schedule.makeupDays）不走周次展开：confirmed 的补课日按 date 直接生成
 // 事件（DESCRIPTION 标注「补课」及 copyFrom），pending（等待学校通知）的跳过。
-function buildCalendarIcs(schedule) {
+// mtime：数据文件最后修改时刻（毫秒时间戳或 Date，路由处传 scheduleCacheMtime）。
+// DTSTAMP 与 LAST-MODIFIED 统一取它而不是构建时刻——每次缓存重建都刷新 DTSTAMP 会让
+// 按 RFC 5546 §2.1.5 判修订的客户端把全部事件当成「有新修订」，提醒重发（HyperOS 超级岛
+// 刷屏根因，M32 调研）。数据不变时两次构建输出逐字节一致，ETag 随之稳定；数据真变时
+// mtime 变化，客户端看到一次真实更新。mtime 缺省（数据文件暂缺等边角）回退为构建时刻。
+function buildCalendarIcs(schedule, mtime) {
   // 手改数据文件可写入任意 totalWeeks（loadSchedule 无 schema 校验），clamp 到写入路径的
   // 上限 30 周，防止未授权的 /api/calendar.ics 被当成 DoS 放大器（M27 审计 P2#9）
   const totalWeeksNum = Math.min(Number.isInteger(schedule.totalWeeks) ? schedule.totalWeeks : 16, 30);
   const periodSettings = Array.isArray(schedule.periodSettings) ? schedule.periodSettings : [];
-  const dtstamp = formatIcsUtcDateTime(new Date());
+  const dtstamp = formatIcsUtcDateTime(mtime ? new Date(mtime) : new Date());
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//schedule-web//class-schedule//CN',
     'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
+    // 不带 METHOD：轮询订阅 feed 不是 iTIP 消息，且带 METHOD:PUBLISH 却无 ORGANIZER
+    // 违反 RFC 5546 §3.2.1（PUBLISH 的 VEVENT 必须含 ORGANIZER）
     `X-WR-CALNAME:${escapeIcsText(schedule.name || '班级课表')}`,
     'BEGIN:VTIMEZONE',
     'TZID:Asia/Shanghai',
@@ -1257,9 +1267,11 @@ function buildCalendarIcs(schedule) {
   // 把汇总提醒作为第二条闹钟塞进首课事件，必须独立成事件；课程事件仍只有一条自适应 VALARM。
   // 汇总事件 DTSTART = 该时段当天最早课的上课时间 - 60 分钟（凌晨首课钳制到当天 00:00），
   // DTEND = DTSTART + 5 分钟。
-  // 汇总事件的 VALARM（TRIGGER:PT0M，事件开始时提醒）默认剥离：HyperOS 超级岛 updatable=false，
-  // 订阅日历每次重同步复触发提醒时岛只新建不更新，一个日程叠 N 个岛，汇总事件（每天三发）是
-  // 主要弹药；ICS_SLOT_SUMMARY_ALARM=true 恢复 PT0M 旧行为（输出与旧版逐字节一致）。
+  // 汇总事件的 VALARM（TRIGGER:PT0M，事件开始时提醒）默认剥离（M31）：M32 调研判定客户端
+  // 把「UID 不变但 DTSTAMP 变新/无 LAST-MODIFIED」当事件更新、提醒重发上岛叠加（超级岛刷屏），
+  // 汇总事件（每天三发）是最大提醒面，剥离它减面；根修是 DTSTAMP/LAST-MODIFIED 稳定化（见
+  // buildCalendarIcs 头注释），本开关仍保留以防客户端盲重排的残余风险。
+  // ICS_SLOT_SUMMARY_ALARM=true 恢复 PT0M 旧行为（汇总事件 VALARM 输出与 M31 前一致）。
   // 调用时读取（与 PRINT_EDIT_PASSWORD 同一风格），方便测试切换两态；生产环境 env 进程级固定，
   // 60s ICS 缓存无需考虑开关运行期变更。
   const slotSummaryAlarm = process.env.ICS_SLOT_SUMMARY_ALARM === 'true';
@@ -1294,6 +1306,7 @@ function buildCalendarIcs(schedule) {
     const eventLines = ['BEGIN:VEVENT'];
     eventLines.push(`UID:${uid}`);
     eventLines.push(`DTSTAMP:${dtstamp}`);
+    eventLines.push(`LAST-MODIFIED:${dtstamp}`);
     eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryStart)}`);
     eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryEnd)}`);
     eventLines.push(`SUMMARY:${escapeIcsText(title)}`);
@@ -1319,13 +1332,25 @@ app.get('/api/calendar.ics', async (req, res) => {
     const now = Date.now();
     if (!icsCache || now >= icsCache.expiresAt) {
       const schedule = await loadSchedule();
-      icsCache = { text: buildCalendarIcs(schedule), expiresAt: now + ICS_CACHE_TTL_MS };
+      // DTSTAMP/LAST-MODIFIED 统一取数据文件 mtime：数据不变时输出（含 ETag）稳定，
+      // 客户端条件请求可直接 304；mtime 与响应体一起缓存，Last-Modified 头始终与体一致
+      icsCache = {
+        text: buildCalendarIcs(schedule, scheduleCacheMtime),
+        expiresAt: now + ICS_CACHE_TTL_MS,
+        lastModified: scheduleCacheMtime
+      };
     }
     await logToFile('ICS 日历导出');
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Content-Disposition', 'inline; filename="schedule.ics"');
-    // no-cache 保持客户端每次回源校验；短 TTL 缓存只是服务端的生成开销优化
+    // no-cache 保持客户端每次回源校验；短 TTL 缓存只是服务端的生成开销优化。
+    // Last-Modified（= 数据文件 mtime）与稳定的 ETag 一起让 If-Modified-Since /
+    // If-None-Match 条件请求返回 304——与 no-cache 不冲突：no-cache 要求每次回源，
+    // 304 免去的是响应体重传（Express 在 res.send 时按 req.fresh 自动判 304）
     res.setHeader('Cache-Control', 'no-cache');
+    if (icsCache.lastModified) {
+      res.setHeader('Last-Modified', new Date(icsCache.lastModified).toUTCString());
+    }
     res.send(icsCache.text);
   } catch (err) {
     console.error('导出 ICS 失败:', err);
