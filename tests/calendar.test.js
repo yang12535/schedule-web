@@ -74,12 +74,12 @@ function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
 }
 
-// 与 server.js formatIcsUtcDateTime 同一格式（UTC、秒位恒 "00"，分钟粒度）；
+// 与 server.js formatIcsUtcDateTime 同一格式（UTC 秒粒度，毫秒截断——RFC 5545 无毫秒段）；
 // 测试里独立实现一份，顺带钉死该输出格式
-function icsUtcMinute(ms) {
+function icsUtc(ms) {
   const d = new Date(ms);
   const p = n => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}00Z`;
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
 }
 
 describe('GET /api/calendar.ics', () => {
@@ -207,7 +207,7 @@ describe('GET /api/calendar.ics', () => {
   // M34：DTSTAMP/LAST-MODIFIED 取数据文件 mtime（不再随缓存重建漂移），
   // Last-Modified 响应头启用 If-Modified-Since 304，ETag 随输出稳定
   describe('M34 稳定时间戳与条件请求', () => {
-    it('Last-Modified 头 = 数据文件 mtime；体内 DTSTAMP/LAST-MODIFIED 全同值且为其 UTC 分钟表示', async () => {
+    it('Last-Modified 头 = 数据文件 mtime；体内 DTSTAMP/LAST-MODIFIED 全同值且为其 UTC 秒粒度表示', async () => {
       const res = await request(app).get('/api/calendar.ics').expect(200);
       const stat = await fs.stat(process.env.DATA_FILE);
       expect(res.headers['last-modified']).toBe(new Date(stat.mtimeMs).toUTCString());
@@ -215,8 +215,8 @@ describe('GET /api/calendar.ics', () => {
       expect(stampLines.length).toBeGreaterThan(0);
       // 两类行都在（每个 VEVENT 各一条）
       expect(new Set(stampLines.map(l => l.slice(0, l.indexOf(':'))))).toEqual(new Set(['DTSTAMP', 'LAST-MODIFIED']));
-      // 全部时间戳同值 = 文件 mtime 的分钟粒度 UTC
-      expect(new Set(stampLines.map(l => l.slice(l.indexOf(':') + 1)))).toEqual(new Set([icsUtcMinute(stat.mtimeMs)]));
+      // 全部时间戳同值 = 文件 mtime 的 UTC 秒粒度表示
+      expect(new Set(stampLines.map(l => l.slice(l.indexOf(':') + 1)))).toEqual(new Set([icsUtc(stat.mtimeMs)]));
     });
 
     it('数据变更落盘后修订时间戳跟随新 mtime 更新', async () => {
@@ -239,7 +239,7 @@ describe('GET /api/calendar.ics', () => {
       expect(res.text).toContain('SUMMARY:时间戳更新验证课');
       expect(res.headers['last-modified']).toBe(new Date(stat.mtimeMs).toUTCString());
       const dtstamps = new Set(res.text.split('\r\n').filter(l => l.startsWith('DTSTAMP:')).map(l => l.slice('DTSTAMP:'.length)));
-      expect([...dtstamps]).toEqual([icsUtcMinute(stat.mtimeMs)]);
+      expect([...dtstamps]).toEqual([icsUtc(stat.mtimeMs)]);
     });
 
     it('ETag 随数据稳定：If-None-Match 命中返回 304', async () => {
@@ -659,7 +659,7 @@ describe('M34：DTSTAMP/LAST-MODIFIED 稳定化（数据文件 mtime）', () => 
       courses: [{ name: '补课锚', period: '1' }]
     }]
   });
-  const MTIME_A = Date.parse('2026-09-20T08:30:15.123Z'); // 秒/毫秒非零，验证分钟粒度截断
+  const MTIME_A = Date.parse('2026-09-20T08:30:15.123Z'); // 毫秒非零，验证毫秒截断（秒保留）
   const MTIME_B = MTIME_A + 2 * 60 * 1000;
   const uidsOf = text => text.split('\r\n').filter(l => l.startsWith('UID:')).sort();
 
@@ -668,10 +668,10 @@ describe('M34：DTSTAMP/LAST-MODIFIED 稳定化（数据文件 mtime）', () => 
     expect(buildCalendarIcs(schedule, MTIME_A)).toBe(buildCalendarIcs(schedule, MTIME_A));
   });
 
-  it('每个 VEVENT 的 DTSTAMP 与 LAST-MODIFIED 同值，等于 mtime 的 UTC 分钟粒度表示', () => {
+  it('每个 VEVENT 的 DTSTAMP 与 LAST-MODIFIED 同值，等于 mtime 的 UTC 秒粒度表示', () => {
     const ics = buildCalendarIcs(mtimeSchedule(), MTIME_A);
-    const expected = '20260920T083000Z'; // 秒/毫秒被截断
-    expect(icsUtcMinute(MTIME_A)).toBe(expected);
+    const expected = '20260920T083015Z'; // 秒保留，毫秒被截断（RFC 5545 无毫秒段）
+    expect(icsUtc(MTIME_A)).toBe(expected);
     const vevents = countOccurrences(ics, 'BEGIN:VEVENT');
     expect(vevents).toBeGreaterThan(0);
     expect(countOccurrences(ics, `DTSTAMP:${expected}`)).toBe(vevents);
@@ -686,10 +686,20 @@ describe('M34：DTSTAMP/LAST-MODIFIED 稳定化（数据文件 mtime）', () => 
   it('mtime 变化后修订时间戳随之更新，UID 集合不变（哈希输入不含时间戳）', () => {
     const a = buildCalendarIcs(mtimeSchedule(), MTIME_A);
     const b = buildCalendarIcs(mtimeSchedule(), MTIME_B);
-    expect(b).not.toContain(icsUtcMinute(MTIME_A));
-    expect(b).toContain(`DTSTAMP:${icsUtcMinute(MTIME_B)}`);
-    expect(b).toContain(`LAST-MODIFIED:${icsUtcMinute(MTIME_B)}`);
+    expect(b).not.toContain(icsUtc(MTIME_A));
+    expect(b).toContain(`DTSTAMP:${icsUtc(MTIME_B)}`);
+    expect(b).toContain(`LAST-MODIFIED:${icsUtc(MTIME_B)}`);
     expect(uidsOf(b)).toEqual(uidsOf(a));
+  });
+
+  // review r1 P2-1：秒位恒 "00" 时同一自然分钟内的第二次修订会被
+  // ICSx⁵（lastModified > local）/iTIP（DTSTAMP 决胜）吞掉，秒粒度后窗口缩到秒
+  it('同一自然分钟内两次修订产生不同时间戳（秒粒度）', () => {
+    const a = buildCalendarIcs(mtimeSchedule(), MTIME_A);
+    const b = buildCalendarIcs(mtimeSchedule(), MTIME_A + 20 * 1000); // 同分钟 +20s
+    expect(a).toContain('DTSTAMP:20260920T083015Z');
+    expect(b).toContain('DTSTAMP:20260920T083035Z');
+    expect(b).not.toContain('20260920T083015Z');
   });
 
   it('UID 锚点哈希与历史算法逐字节兼容（防回归：UID 不含时间戳/随机源）', () => {

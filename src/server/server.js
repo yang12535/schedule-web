@@ -960,7 +960,12 @@ function formatIcsLocalDateTime(date) {
 }
 
 function formatIcsUtcDateTime(date) {
-  return `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}00Z`;
+  // 秒位输出真实秒（review r1 P2-1）：秒位恒 "00" 时，同一自然分钟内连续第二次
+  // saveSchedule 会产生相同 DTSTAMP/LAST-MODIFIED 但内容不同，ICSx⁵ 的
+  // lastModified > local 门槛与 iTIP DTSTAMP 决胜会把第二次修订吞掉直到下次跨分钟编辑。
+  // 毫秒仍截断（RFC 5545 date-time 无毫秒段）。本函数只喂 DTSTAMP/LAST-MODIFIED
+  // （DTSTART/DTEND 走 formatIcsLocalDateTime，不受影响）
+  return `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}${pad2(date.getUTCSeconds())}Z`;
 }
 
 function escapeIcsText(text) {
