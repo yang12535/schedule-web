@@ -2,9 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>班级课表</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" crossorigin="anonymous" integrity="sha384-yNSZBFvuOWcmww494a9+1zNuvgUGEXoWkein7cxP8wHUTi3iXCU4vJ7hr3tzBCml"></script>
   <style>
     :root {
       --primary: #4A90D9;
@@ -16,45 +15,62 @@
       --gray-600: #5F6368;
       --gray-900: #202124;
       --coral: #FF6B6B;
+      /* 语义变量：组件一律引用这组变量，深色模式在文件底部媒体查询里统一覆盖 */
+      --bg: var(--gray-50);
+      --surface: #FFFFFF;
+      --surface-2: var(--gray-100);
+      --border: var(--gray-200);
+      --text: var(--gray-900);
+      --text-2: var(--gray-600);
+      --text-3: var(--gray-400);
+      --card-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; background: var(--gray-50); }
-    
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }
+
     .container { max-width: 600px; margin: 0 auto; min-height: 100vh; }
-    .header { background: white; padding: 16px 20px; border-bottom: 1px solid var(--gray-200); position: sticky; top: 0; z-index: 100; }
-    .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-    .header-title { font-size: 20px; font-weight: 700; color: var(--gray-900); }
-    .header-desc { font-size: 13px; color: var(--gray-600); margin-top: 2px; }
-    
-    .mode-badge { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; background: var(--primary-light); color: var(--primary); }
+    .header { background: var(--surface); padding: 16px 20px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+    .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+    .header-title { font-size: 20px; font-weight: 700; color: var(--text); }
+    .header-desc { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+    .header-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .header-date { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .header-ics-btn { padding: 4px 10px; font-size: 12px; }
+
+    .mode-badge { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; background: var(--primary-light); color: var(--primary); white-space: nowrap; flex-shrink: 0; }
     .mode-badge.edit { background: #FEE2E2; color: #DC2626; }
+
+    .week-nav { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .week-btn { width: 28px; height: 28px; border: none; background: var(--surface-2); border-radius: 50%; cursor: pointer; color: var(--text-2); flex-shrink: 0; }
+    .week-badge { background: var(--primary-light); color: var(--primary); padding: 6px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; white-space: nowrap; }
     
-    .week-nav { display: flex; align-items: center; gap: 8px; }
-    .week-btn { width: 28px; height: 28px; border: none; background: var(--gray-100); border-radius: 50%; cursor: pointer; color: var(--gray-600); }
-    .week-badge { background: var(--primary-light); color: var(--primary); padding: 6px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; }
-    
-    .toolbar { background: white; padding: 12px 20px; border-bottom: 1px solid var(--gray-200); display: flex; gap: 10px; overflow-x: auto; }
-    .toolbar-btn { padding: 8px 16px; border: 1px solid var(--gray-200); background: white; border-radius: 20px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .toolbar { background: var(--surface); padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 10px; overflow-x: auto; }
+    .toolbar-btn { padding: 8px 16px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 20px; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .toolbar-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
     .toolbar-btn.danger { background: #FEE2E2; color: #DC2626; border-color: #FECACA; }
-    
-    .day-tabs { display: flex; gap: 8px; padding: 12px 16px; background: white; border-bottom: 1px solid var(--gray-200); overflow-x: auto; }
-    .day-tab { width: 64px; height: 56px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; border: none; background: transparent; }
+
+    .day-tabs { display: flex; gap: 8px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; }
+    .day-tab { flex: 1 1 0; min-width: 56px; height: 62px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; border: none; background: transparent; color: var(--text); position: relative; padding-bottom: 12px; }
     .day-tab.active { background: var(--primary); color: white; }
     .day-tab .day-label { font-size: 12px; margin-bottom: 2px; }
     .day-tab .day-number { font-size: 16px; font-weight: 700; }
-    
-    .content { padding: 16px; padding-bottom: 200px; }
-    
-    .add-btn { width: 100%; padding: 16px; border: 2px dashed var(--gray-200); border-radius: 12px; background: white; color: var(--gray-600); cursor: pointer; margin-bottom: 12px; }
+    .day-tab .holiday-badge, .day-tab .workday-badge { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); margin-top: 0; }
+
+    .content { padding: 16px; }
+    /* 底部悬浮卡（下一节课）的滚动余量：统一由 spacer 承担，避免每个 content 各自 200px 叠加出大片空白 */
+    .bottom-spacer { height: 180px; }
+
+    .add-btn { width: 100%; padding: 16px; border: 2px dashed var(--border); border-radius: 12px; background: var(--surface); color: var(--text-2); cursor: pointer; margin-bottom: 12px; font-size: 14px; }
     .add-btn:hover { border-color: var(--primary); color: var(--primary); }
-    
-    .course-item { display: flex; margin-bottom: 12px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); position: relative; }
+
+    .course-item { display: flex; margin-bottom: 12px; background: var(--surface); border-radius: 12px; box-shadow: var(--card-shadow); position: relative; overflow: hidden; }
     .course-item.current { box-shadow: 0 0 0 2px var(--coral); }
-    .course-time { width: 72px; padding: 16px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--gray-50); border-right: 1px solid var(--gray-200); }
-    .course-time .period { font-size: 11px; color: var(--gray-400); }
-    .course-time .time { font-size: 12px; font-weight: 600; color: var(--gray-600); }
-    .course-info { flex: 1; padding: 14px 16px; position: relative; border-left: 4px solid var(--gray-400); }
+    .course-time { width: 76px; flex-shrink: 0; padding: 14px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--bg); border-right: 1px solid var(--border); }
+    .course-time .period { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+    .course-time .time { font-size: 12px; font-weight: 600; color: var(--text-2); margin-top: 4px; }
+    .course-time .time-end::before { content: ''; display: block; width: 16px; height: 1px; background: var(--border); margin: 3px auto 0; }
+    .course-info { flex: 1; min-width: 0; padding: 14px 16px; position: relative; border-left: 4px solid var(--gray-400); }
     .course-info[data-type="database"] { border-color: #4A90D9; background: #E3F2FD; }
     .course-info[data-type="english"] { border-color: #FF9800; background: #FFF3E0; }
     .course-info[data-type="security"] { border-color: #4CAF50; background: #E8F5E9; }
@@ -64,44 +80,48 @@
     .course-info[data-type="psychology"] { border-color: #E91E63; background: #FCE4EC; }
     .course-info[data-type="math"] { border-color: #F44336; background: #FFEBEE; }
     .course-info[data-type="chemistry"] { border-color: #3F51B5; background: #E8EAF6; }
-    .course-name { font-size: 16px; font-weight: 600; color: var(--gray-900); margin-bottom: 6px; }
-    .course-meta { font-size: 13px; color: var(--gray-600); }
-    .course-weeks { font-size: 11px; color: var(--gray-400); margin-top: 4px; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 10px; display: inline-block; }
+    .course-name { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+    .course-meta { font-size: 13px; color: var(--text-2); }
+    .course-weeks { font-size: 11px; color: var(--text-3); margin-top: 6px; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 10px; display: inline-block; }
     .course-actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; }
-    .course-actions button { width: 32px; height: 32px; border: none; border-radius: 8px; background: var(--gray-100); cursor: pointer; }
-    
-    .empty-state { text-align: center; padding: 60px 20px; color: var(--gray-600); }
-    .empty-state-icon { width: 80px; height: 80px; background: var(--gray-100); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 36px; }
-    .loading { text-align: center; padding: 60px; color: var(--gray-600); }
+    .course-actions button { width: 32px; height: 32px; border: none; border-radius: 8px; background: var(--surface-2); cursor: pointer; }
+
+    /* 课程状态徽章：补课/进行中 与休班徽章保持同一视觉语言 */
+    .makeup-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; vertical-align: 2px; }
+    .live-badge { display: inline-block; background: #FFE8E8; color: #FF6B6B; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; vertical-align: 2px; }
+
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-2); }
+    .empty-state-icon { width: 80px; height: 80px; background: var(--surface-2); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 36px; }
+    .loading { text-align: center; padding: 60px; color: var(--text-2); }
     
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s; }
     .modal-overlay.active { opacity: 1; visibility: visible; }
-    .modal { background: white; border-radius: 16px; width: 90%; max-width: 480px; max-height: 90vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; }
+    .modal { background: var(--surface); border-radius: 16px; width: 90%; max-width: 480px; max-height: 90vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; }
     .modal-overlay.active .modal { transform: scale(1); }
-    .modal-header { padding: 20px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; }
-    .modal-title { font-size: 18px; font-weight: 700; }
-    .modal-close { width: 32px; height: 32px; border: none; background: var(--gray-100); border-radius: 50%; cursor: pointer; }
+    .modal-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .modal-title { font-size: 18px; font-weight: 700; color: var(--text); }
+    .modal-close { width: 32px; height: 32px; border: none; background: var(--surface-2); color: var(--text-2); border-radius: 50%; cursor: pointer; }
     .modal-body { padding: 20px; }
     .form-group { margin-bottom: 16px; }
-    .form-label { display: block; font-size: 14px; font-weight: 500; color: var(--gray-600); margin-bottom: 6px; }
-    .form-input, .form-select { width: 100%; padding: 12px 16px; border: 1px solid var(--gray-200); border-radius: 10px; font-size: 15px; }
+    .form-label { display: block; font-size: 14px; font-weight: 500; color: var(--text-2); margin-bottom: 6px; }
+    .form-input, .form-select { width: 100%; padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; font-size: 15px; background: var(--surface); color: var(--text); }
     .form-input:focus, .form-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
     .color-options { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 8px; }
     .color-option { width: 36px; height: 36px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; }
     .color-option.selected { border-color: var(--gray-900); }
-    .modal-footer { padding: 16px 20px; border-top: 1px solid var(--gray-200); display: flex; gap: 12px; }
+    .modal-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; gap: 12px; }
     .btn { flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; }
-    .btn-secondary { background: var(--gray-100); color: var(--gray-600); }
+    .btn-secondary { background: var(--surface-2); color: var(--text-2); }
     .btn-primary { background: var(--primary); color: white; }
     
     .toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--gray-900); color: white; padding: 12px 24px; border-radius: 24px; font-size: 14px; z-index: 2000; opacity: 0; transition: all 0.3s; }
     .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
     .toast.success { background: #10B981; }
     .toast.error { background: #DC2626; }
-    
-    .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: white; border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
+
+    .next-course { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); width: calc(100% - 40px); max-width: 560px; background: var(--surface); color: var(--text); border: 2px solid var(--coral); border-radius: 16px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); z-index: 100; }
     .next-course.no-class { border-color: var(--gray-400); }
     .next-course.in-class { border-color: #10B981; }
     .next-course.next-week { border-color: var(--primary); }
@@ -113,9 +133,9 @@
     .next-course.next-week .next-course-countdown { color: var(--primary); }
     .next-course.ending-soon .next-course-title { color: #D97706; }
     .next-course-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
-    .next-course-info { font-size: 13px; color: var(--gray-600); }
+    .next-course-info { font-size: 13px; color: var(--text-2); }
     .next-course-countdown { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--coral); }
-    .next-course-secondary { font-size: 13px; color: var(--gray-400); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--gray-200); }
+    .next-course-secondary { font-size: 13px; color: var(--text-3); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); }
     @keyframes pulse-warning {
       0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.28), 0 4px 20px rgba(0,0,0,0.1); }
       70% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0), 0 4px 20px rgba(0,0,0,0.1); }
@@ -125,19 +145,16 @@
     /* 公告弹窗 */
     .announcement-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 3000; opacity: 0; visibility: hidden; transition: all 0.3s; }
     .announcement-overlay.active { opacity: 1; visibility: visible; }
-    .announcement-modal { background: white; border-radius: 20px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    .announcement-modal { background: var(--surface); border-radius: 20px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto; transform: scale(0.9); transition: all 0.3s; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
     .announcement-overlay.active .announcement-modal { transform: scale(1); }
     .announcement-header { background: linear-gradient(135deg, #4A90D9, #357ABD); color: white; padding: 24px 20px 16px; border-radius: 20px 20px 0 0; }
     .announcement-header h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     .announcement-header .ann-date { font-size: 12px; opacity: 0.8; }
-    .announcement-body { padding: 20px; font-size: 15px; line-height: 1.7; color: var(--gray-900); white-space: pre-wrap; }
-    .announcement-footer { padding: 16px 20px; border-top: 1px solid var(--gray-200); display: flex; gap: 10px; }
+    .announcement-body { padding: 20px; font-size: 15px; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
+    .announcement-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; }
     .announcement-footer .btn { flex: 1; }
     .announcement-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
-    
-    /* 补课标签 */
-    .makeup-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-weight: 600; }
-    
+
     /* 本周不上印章 */
     .skip-week-stamp {
       position: absolute;
@@ -167,56 +184,111 @@
     .course-item.has-actions .skip-week-stamp { right: calc(12px + 32px + 6px + 32px + 8px); }
     
     /* 公告管理 */
-    .ann-list-item { background: white; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #4A90D9; }
+    .ann-list-item { background: var(--surface); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: var(--card-shadow); border-left: 4px solid #4A90D9; }
     .ann-list-item.disabled { border-left-color: var(--gray-400); opacity: 0.6; }
-    .ann-list-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-    .ann-list-meta { font-size: 12px; color: var(--gray-400); margin-bottom: 8px; }
+    .ann-list-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+    .ann-list-meta { font-size: 12px; color: var(--text-3); margin-bottom: 8px; }
     .ann-list-actions { display: flex; gap: 8px; }
     .ann-list-actions button { padding: 6px 12px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
     .ann-btn-edit { background: var(--primary-light); color: var(--primary); }
     .ann-btn-del { background: #FEE2E2; color: #DC2626; }
     .form-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     .form-check input { width: 18px; height: 18px; accent-color: var(--primary); }
-    .form-check-label { font-size: 14px; color: var(--gray-600); }
-    
+    .form-check-label { font-size: 14px; color: var(--text-2); }
+
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
-    
+
     /* ICP 备案页脚 */
-    .icp-footer { text-align: center; padding: 8px 12px 24px; font-size: 12px; color: var(--gray-400); }
-    .icp-footer a { color: var(--gray-400); text-decoration: none; }
+    .icp-footer { text-align: center; padding: 8px 12px 24px; font-size: 12px; color: var(--text-3); }
+    .icp-footer a { color: var(--text-3); text-decoration: none; }
 
     /* 节假日标注 */
-    .holiday-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; }
-    .workday-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; }
-    .holiday-notice { background: #FFF7ED; border: 1px solid #FED7AA; color: #C2410C; border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
+    .holiday-badge { display: inline-block; background: #FEE2E2; color: #DC2626; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; white-space: nowrap; }
+    .workday-badge { display: inline-block; background: #FEF3C7; color: #D97706; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-top: 2px; font-weight: 600; white-space: nowrap; }
+    .holiday-notice { display: flex; align-items: center; gap: 10px; background: #FFF7ED; border: 1px solid #FED7AA; color: #C2410C; border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
     .holiday-notice.workday { background: #FFFBEB; border-color: #FDE68A; color: #B45309; }
-    .ics-link-input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 12px; color: var(--gray-600); background: var(--gray-50); word-break: break-all; }
+    .notice-chip { flex-shrink: 0; width: 24px; height: 24px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: #FEE2E2; color: #DC2626; }
+    .holiday-notice.workday .notice-chip { background: #FEF3C7; color: #D97706; }
+    .ics-link-input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--text-2); background: var(--bg); word-break: break-all; }
+    .ics-tip { font-size: 13px; color: var(--text-2); margin-bottom: 8px; line-height: 1.6; }
+    .ics-steps { font-size: 12px; color: var(--text-2); margin: 0 0 12px 18px; line-height: 1.7; }
+    .ics-note { font-size: 12px; color: var(--text-3); margin-top: 10px; line-height: 1.6; }
 
     .period-setting { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-    .period-setting label { width: 50px; font-size: 13px; color: var(--gray-600); }
-    .period-setting input { padding: 8px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 13px; }
+    .period-setting label { width: 50px; font-size: 13px; color: var(--text-2); }
+    .period-setting input { padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--surface); color: var(--text); }
 
-    /* 调休补课日（「班」日） */
+    /* 调休补课日（「班」日）：卡片层级 = 日期+星期 → 状态徽章 → 课程行（左时间右课程） → 操作 */
     .makeup-days { padding-top: 0; }
-    .makeup-days-title { font-size: 15px; font-weight: 700; color: var(--gray-900); margin: 4px 0 10px; }
-    .makeup-day-card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 14px 16px; margin-bottom: 12px; border-left: 4px solid #F59E0B; }
+    .makeup-days-title { font-size: 15px; font-weight: 700; color: var(--text); margin: 4px 0 10px; }
+    .makeup-day-card { background: var(--surface); border-radius: 12px; box-shadow: var(--card-shadow); padding: 14px 16px; margin-bottom: 12px; border-left: 4px solid #F59E0B; }
     .makeup-day-card.pending { border-left-color: var(--gray-400); }
     .makeup-day-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .makeup-day-title { font-size: 15px; font-weight: 600; }
-    .makeup-day-sub { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
-    .makeup-day-badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; }
+    .makeup-day-title { font-size: 15px; font-weight: 700; color: var(--text); }
+    .makeup-day-week { font-size: 13px; font-weight: 500; color: var(--text-2); margin-left: 4px; }
+    .makeup-day-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+    .makeup-day-badge { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 10px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
     .makeup-day-badge.confirmed { background: #FEF3C7; color: #D97706; }
-    .makeup-day-badge.pending { background: var(--gray-100); color: var(--gray-600); }
-    .makeup-course-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px dashed var(--gray-200); font-size: 13px; }
-    .makeup-course-time { color: var(--gray-600); white-space: nowrap; }
-    .makeup-course-name { font-weight: 600; flex: 1; }
-    .makeup-course-meta { color: var(--gray-400); font-size: 12px; white-space: nowrap; }
-    .makeup-day-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .makeup-day-badge.pending { background: var(--surface-2); color: var(--text-2); }
+    .makeup-course-list { margin-top: 10px; border-top: 1px solid var(--border); }
+    .makeup-course-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px dashed var(--border); }
+    .makeup-course-row:last-child { border-bottom: none; }
+    .makeup-course-time { flex: 0 0 86px; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
+    .makeup-course-time .mc-period { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+    .makeup-course-time .mc-time { font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+    .makeup-course-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+    .makeup-course-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .makeup-course-meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+    .makeup-day-empty { margin-top: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 10px; font-size: 12px; color: var(--text-3); text-align: center; line-height: 1.6; }
+    .makeup-day-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
     .makeup-day-actions button { padding: 6px 12px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; background: var(--primary-light); color: var(--primary); }
-    .makeup-day-actions button.danger { background: #FEE2E2; color: #DC2626; }
-    .makeup-course-form-row { border: 1px solid var(--gray-200); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+    .makeup-day-actions button.danger { background: #FEE2E2; color: #DC2626; margin-left: auto; }
+    .makeup-course-form-row { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
     .makeup-course-form-row .row-del { margin-top: 8px; border: none; background: #FEE2E2; color: #DC2626; border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+
+    /* 深色模式：只覆盖语义变量与少数硬编码浅色块，组件无需分别适配 */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --primary-light: #1E3247;
+        --bg: #0F1113;
+        --surface: #1B1E22;
+        --surface-2: #272B30;
+        --border: #363B42;
+        --text: #E8EAED;
+        --text-2: #B6BBC2;
+        --text-3: #7F858C;
+        --card-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      }
+      .course-info[data-type="database"] { background: rgba(74,144,217,0.16); }
+      .course-info[data-type="english"] { background: rgba(255,152,0,0.15); }
+      .course-info[data-type="security"] { background: rgba(76,175,80,0.15); }
+      .course-info[data-type="politics"] { background: rgba(156,39,176,0.18); }
+      .course-info[data-type="linux"] { background: rgba(0,188,212,0.14); }
+      .course-info[data-type="default"] { background: rgba(158,158,158,0.14); }
+      .course-info[data-type="psychology"] { background: rgba(233,30,99,0.16); }
+      .course-info[data-type="math"] { background: rgba(244,67,54,0.15); }
+      .course-info[data-type="chemistry"] { background: rgba(63,81,181,0.20); }
+      .course-weeks { background: rgba(255,255,255,0.08); }
+      .color-option.selected { border-color: var(--text); }
+      .form-input, .form-select { background: var(--surface-2); }
+      .form-input::placeholder { color: var(--text-3); }
+      .period-setting input { background: var(--surface-2); }
+      .next-course { box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+      .toast { background: #2C3138; }
+      .live-badge { background: rgba(255,107,107,0.18); color: #FF8F8F; }
+      .makeup-badge { background: rgba(217,119,6,0.20); color: #E8B95F; }
+      .makeup-day-badge.confirmed { background: rgba(217,119,6,0.20); color: #E8B95F; }
+      .holiday-badge { background: rgba(220,38,38,0.22); color: #F08C8C; }
+      .workday-badge { background: rgba(217,119,6,0.22); color: #E8B95F; }
+      .announcement-badge { background: rgba(220,38,38,0.20); color: #F08C8C; }
+      .holiday-notice { background: rgba(194,65,12,0.14); border-color: rgba(254,215,170,0.22); color: #F0B183; }
+      .holiday-notice.workday { background: rgba(180,83,9,0.14); border-color: rgba(253,230,138,0.20); color: #E8C468; }
+      .notice-chip { background: rgba(220,38,38,0.24); color: #F08C8C; }
+      .holiday-notice.workday .notice-chip { background: rgba(217,119,6,0.22); color: #E8B95F; }
+      .toolbar-btn.danger, .mode-badge.edit, .ann-btn-del,
+      .makeup-day-actions button.danger, .makeup-course-form-row .row-del { background: rgba(220,38,38,0.18); color: #F08C8C; border-color: transparent; }
+    }
   </style>
 </head>
 <body>
@@ -229,15 +301,15 @@
         </div>
         <button class="mode-badge" id="modeBtn" onclick="toggleMode()">👀 查看</button>
       </div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div class="header-row">
         <div class="week-nav">
           <button class="week-btn" onclick="changeWeek(-1)"><</button>
           <span class="week-badge" id="weekDisplay">第1周</span>
           <button class="week-btn" onclick="changeWeek(1)">></button>
         </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <div style="font-size: 12px; color: var(--gray-400);" id="currentDate"></div>
-          <button class="toolbar-btn" id="icsBtn" onclick="openIcsModal()" style="padding: 4px 10px; font-size: 12px;">📅 订阅日历</button>
+        <div class="header-actions">
+          <div class="header-date" id="currentDate"></div>
+          <button class="toolbar-btn header-ics-btn" id="icsBtn" onclick="openIcsModal()">📅 订阅日历</button>
         </div>
       </div>
     </div>
@@ -266,6 +338,8 @@
 
     <!-- 调休补课日（「班」日）区块 -->
     <div class="content makeup-days" id="makeupDaysSection" style="display: none;"></div>
+
+    <div class="bottom-spacer"></div>
 
     <div class="icp-footer" id="icpFooter" style="display: none;"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" id="icpNumberLink"></a></div>
   </div>
@@ -349,7 +423,7 @@
         </div>
         <div class="form-check" style="margin-top: 8px;">
           <input type="checkbox" id="courseSkipThisWeek">
-          <label class="form-check-label" for="courseSkipThisWeek">本周不上（仅当前周生效）</label>
+          <label class="form-check-label" for="courseSkipThisWeek">本周不上（仅当前查看的这一周生效）</label>
         </div>
       </div>
       <div class="modal-footer">
@@ -475,7 +549,7 @@
       <div class="modal-body" style="text-align: center;">
         <p style="color: var(--gray-600); margin-bottom: 16px;">请输入编辑密码</p>
         <div style="position: relative; width: 100%;">
-          <input type="password" inputmode="numeric" pattern="[0-9]*" id="passwordInput" placeholder="输入密码" style="width: 100%; padding: 12px 56px 12px 12px; border: 2px solid #4A90D9; border-radius: 8px; font-size: 18px; text-align: center; -moz-appearance: textfield;">
+          <input type="password" id="passwordInput" placeholder="输入密码" style="width: 100%; padding: 12px 56px 12px 12px; border: 2px solid #4A90D9; border-radius: 8px; font-size: 18px; text-align: center; -moz-appearance: textfield;">
           <button type="button" onclick="togglePasswordVisibility()" id="togglePasswordBtn" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #4A90D9; font-size: 14px; cursor: pointer; padding: 4px 8px; user-select: none;">显示</button>
         </div>
       </div>
@@ -494,9 +568,13 @@
         <button class="modal-close" onclick="closeIcsModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <p style="font-size: 13px; color: var(--gray-600); margin-bottom: 12px;">把下面的链接添加到手机日历（iOS：设置 → 日历 → 账户 → 添加已订阅的日历；Android/电脑：日历应用的「通过 URL 订阅」），课表会按学期自动展开。提醒为自适应：课间 ≥30 分钟时提前 30 分钟提醒，短课间在上一节下课时提醒；另外每个时段（上午/下午/晚上）开课前 60 分钟会推送当天该时段的课程汇总预告。</p>
+        <p class="ics-tip">把下面的链接添加到手机日历，课表会按学期自动展开：</p>
+        <ul class="ics-steps">
+          <li>iOS：设置 → 日历 → 账户 → 添加已订阅的日历</li>
+          <li>Android / 电脑：日历应用的「通过 URL 订阅」</li>
+        </ul>
         <input type="text" class="ics-link-input" id="icsLinkInput" readonly onclick="this.select()">
-        <p style="font-size: 12px; color: var(--gray-400); margin-top: 10px;">节假日当天不生成课程事件；课程变动后日历会在下次刷新时自动更新。</p>
+        <p class="ics-note">提醒为自适应：课间 ≥30 分钟时提前 30 分钟提醒，短课间在上一节下课时提醒；每个时段（上午/下午/晚上）开课前 60 分钟推送当天该时段的课程汇总预告。节假日当天不生成课程事件；课程变动后日历会在下次刷新时自动更新。</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeIcsModal()">关闭</button>
