@@ -104,6 +104,7 @@ make dev
 | `EDIT_PASSWORD` | 编辑密码；未设置时随机生成 | 自动生成 |
 | `PRINT_EDIT_PASSWORD` | 是否在启动日志中显示自动生成的密码 | 服务默认 false，Compose 默认 true |
 | `HOST_PORT` | 服务端口 | 30080 |
+| `ICS_SLOT_SUMMARY_ALARM` | 📋 时段汇总事件是否携带 VALARM 闹钟（PT0M）；false=剥离以规避 HyperOS 超级岛重复提醒刷屏，true=恢复旧行为。机制与客户端兜底见 [docs/operations.md](docs/operations.md) | false |
 
 ## 🔧 管理命令
 
