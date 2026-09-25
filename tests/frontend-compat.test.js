@@ -46,3 +46,23 @@ describe('Layout contract', () => {
     expect(script).toContain('live-badge');
   });
 });
+
+describe('Course id fallback guards (M30)', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'public', 'js', 'schedule.js'),
+    'utf8'
+  );
+
+  it('edit/delete with empty id show explicit errors instead of silent failure', () => {
+    // 旧数据课程缺 id → data-id=""：editCourse('') 曾静默 return，deleteCourse('')
+    // 曾是静默空操作却仍 toast「已自动保存」。兜底路径必须给明确错误提示
+    expect(script).toContain("if (!id) { showToast('该课程缺少 id，无法编辑");
+    expect(script).toContain("if (!id) { showToast('该课程缺少 id，无法删除");
+  });
+
+  it('deleteCourse refuses the fake-success save when nothing matched the id', () => {
+    // 删除前后长度不变 = 没有匹配到课程：报错返回，不走 autoSave
+    expect(script).toContain('length === before');
+    expect(script).toContain("showToast('未找到该课程，可能已被删除，请刷新后重试', 'error')");
+  });
+});

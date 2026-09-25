@@ -936,9 +936,11 @@
     }
 
     function editCourse(id) {
+      // 旧数据缺 id 时 escapeAttr(undefined)=''，这里收到空串；明确报错而非静默无反应（M30 兜底）
+      if (!id) { showToast('该课程缺少 id，无法编辑；请刷新页面重试，仍无效请重新导入数据', 'error'); return; }
       if (!schedule || !schedule.courses[currentDay]) return;
       const c = schedule.courses[currentDay].find(x => x.id === id);
-      if (!c) return;
+      if (!c) { showToast('未找到该课程，可能已被删除，请刷新后重试', 'error'); return; }
       editingCourseId = id;
       document.getElementById('modalTitle').textContent = '编辑课程';
       document.getElementById('courseName').value = c.name;
@@ -964,10 +966,15 @@
     }
 
     async function deleteCourse(id) {
+      // 空 id（旧数据缺 id）时 filter 不过滤任何项，删除是静默空操作却还会 toast
+      // 「已自动保存」；先拦截给明确错误（M30 兜底）
+      if (!id) { showToast('该课程缺少 id，无法删除；请刷新页面重试，仍无效请重新导入数据', 'error'); return; }
       const ok = await showConfirmModal('确定删除这门课程？');
       if (!ok) return;
       if (!schedule || !schedule.courses[currentDay]) return;
+      const before = schedule.courses[currentDay].length;
       schedule.courses[currentDay] = schedule.courses[currentDay].filter(c => c.id !== id);
+      if (schedule.courses[currentDay].length === before) { showToast('未找到该课程，可能已被删除，请刷新后重试', 'error'); return; }
       renderSchedule();
       // 自动保存（失败时 autoSave 会从服务器重载回滚）
       await autoSave();

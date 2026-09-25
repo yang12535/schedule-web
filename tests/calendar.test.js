@@ -18,7 +18,7 @@ process.env.SEMESTER_START = '2026-08-31';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
-const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, resolveCourseTimeRange, slotOfFirstPeriod, slotOfActualStartMinutes } = require('../src/server/server');
+const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, resolveCourseTimeRange, slotOfFirstPeriod, slotOfActualStartMinutes, ensureCourseIds } = require('../src/server/server');
 
 const seedData = {
   name: 'ICS测试班',
@@ -487,5 +487,80 @@ describe('时段归属边界（slotOfFirstPeriod / slotOfActualStartMinutes）',
     expect(slotOfActualStartMinutes(11 * 60, short)).toBe('morning');
     expect(slotOfActualStartMinutes(13 * 60, short)).toBe('afternoon');
     expect(slotOfActualStartMinutes(19 * 60, short)).toBe('evening');
+  });
+});
+
+
+describe('课程 id 回填（M30）', () => {
+  // seedData 本就是旧数据形态（所有课程无 id），深拷贝后显式剥掉 id 兜底
+  const legacySchedule = () => {
+    const schedule = JSON.parse(JSON.stringify(seedData));
+    for (const list of Object.values(schedule.courses)) {
+      for (const course of list) delete course.id;
+    }
+    for (const day of schedule.makeupDays) {
+      for (const course of day.courses) delete course.id;
+    }
+    return schedule;
+  };
+  const collectIds = schedule => [
+    ...Object.values(schedule.courses).flatMap(list => list.map(c => c.id)),
+    ...schedule.makeupDays.flatMap(day => day.courses.map(c => c.id))
+  ];
+
+  it('id 回填前后 ICS 输出逐字节一致（DTSTAMP 除外），UID 集合不变', () => {
+    // UID 稳定性核查结论：sw-/swm-/sw-daily- UID 全部由课程内容哈希派生，不含 course.id，
+    // 这里用逐字节对比钉死——回填绝不允许改变既有日历订阅的事件 UID
+    const schedule = legacySchedule();
+    const before = buildCalendarIcs(schedule);
+    expect(ensureCourseIds(schedule)).toBe(true);
+    const after = buildCalendarIcs(schedule);
+    const stripDtstamp = text => text.split('\r\n').filter(line => !line.startsWith('DTSTAMP:')).join('\r\n');
+    expect(stripDtstamp(after)).toBe(stripDtstamp(before));
+    const uids = text => text.split('\r\n').filter(line => line.startsWith('UID:'));
+    expect(uids(after)).toEqual(uids(before));
+  });
+
+  it('回填幂等：二次回填无改动，id 集合不变', () => {
+    const schedule = legacySchedule();
+    expect(ensureCourseIds(schedule)).toBe(true);
+    const firstPass = collectIds(schedule);
+    expect(firstPass.length).toBeGreaterThan(0);
+    expect(firstPass.every(id => typeof id === 'string' && id.length > 0)).toBe(true);
+    expect(ensureCourseIds(schedule)).toBe(false);
+    expect(collectIds(schedule)).toEqual(firstPass);
+  });
+
+  it('makeupDays 内课程一并回填，全部 id 全局唯一', () => {
+    const schedule = legacySchedule();
+    ensureCourseIds(schedule);
+    const ids = collectIds(schedule);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const day of schedule.makeupDays) {
+      expect(day.courses.every(c => typeof c.id === 'string' && c.id.length > 0)).toBe(true);
+    }
+  });
+
+  it('字段全同的课程得到互不相同的确定性 id', () => {
+    const makeDup = () => ({ name: '撞车课', period: '1', teacher: '同人', location: 'A101' });
+    const schedule = legacySchedule();
+    schedule.courses.monday.push(makeDup(), makeDup());
+    ensureCourseIds(schedule);
+    const [a, b] = schedule.courses.monday.slice(-2);
+    expect(a.id).not.toBe(b.id);
+    // 同一份数据从头再回填一遍，结果逐字节一致（确定性，跨进程/跨重启稳定）
+    const again = legacySchedule();
+    again.courses.monday.push(makeDup(), makeDup());
+    ensureCourseIds(again);
+    expect(collectIds(again)).toEqual(collectIds(schedule));
+  });
+
+  it('已有字符串 id 原样保留，数字 id 归一化为字符串', () => {
+    const schedule = legacySchedule();
+    schedule.courses.monday[0].id = 'keep-me';
+    schedule.courses.monday[1].id = 42;
+    ensureCourseIds(schedule);
+    expect(schedule.courses.monday[0].id).toBe('keep-me');
+    expect(schedule.courses.monday[1].id).toBe('42');
   });
 });

@@ -482,6 +482,75 @@ function withSaveLock(fn) {
   return next;
 }
 
+// ===== 历史数据课程 id 回填（M30） =====
+// 2026-09 之前的数据文件课程对象没有 id 字段；前端按 data-id 定位课程，
+// 缺 id 时编辑弹窗打不开、删除是静默空操作（finding 20260925-reviewer-front-bug-id）。
+// 在 loadSchedule（读）与 saveSchedule（写，覆盖导入/PUT 等全部写入口）两处兜底，
+// 为缺 id 的课程生成确定性 id（容器 + 课程内容哈希），幂等：同一份数据重复回填
+// 结果逐字节一致，二次加载不再变化。ICS UID 由课程内容哈希派生、不含 id
+// （见 buildCalendarIcs 的 sw-/swm- 前缀处），回填不改变既有日历订阅的事件 UID。
+const COURSE_BACKFILL_ID_FIELDS = [
+  'name', 'period', 'location', 'teacher', 'type',
+  'startWeek', 'endWeek', 'weekType', 'skipWeek', 'isMakeup',
+  'customStart', 'customEnd'
+];
+
+function computeCourseBackfillId(scope, course) {
+  const fingerprint = [scope, ...COURSE_BACKFILL_ID_FIELDS.map(field => {
+    const value = course[field];
+    return value === undefined || value === null ? '' : String(value);
+  })].join('|');
+  return `c-${crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 16)}`;
+}
+
+// 回填 schedule 内所有缺 id 的课程（每周课程 + makeupDays 内课程），返回是否有改动。
+// 已有非空字符串 id 原样保留；数字等历史 id 统一为字符串（前端从 DOM 取 id 恒为字符串，
+// 数字 id 会永远匹配不上）；同容器内字段全同的课程哈希撞车，按遍历顺序追加 -2、-3… 稳定序号。
+function ensureCourseIds(schedule) {
+  if (!schedule || typeof schedule !== 'object') return false;
+  let changed = false;
+  const usedIds = new Set();
+  const claim = base => {
+    let id = base;
+    let n = 1;
+    while (usedIds.has(id)) {
+      n += 1;
+      id = `${base}-${n}`;
+    }
+    usedIds.add(id);
+    return id;
+  };
+  const fill = (course, scope) => {
+    if (!course || typeof course !== 'object') return;
+    if (typeof course.id === 'string' && course.id.trim()) {
+      usedIds.add(course.id);
+      return;
+    }
+    if (course.id !== undefined && course.id !== null && String(course.id).trim()) {
+      course.id = String(course.id);
+      usedIds.add(course.id);
+      changed = true;
+      return;
+    }
+    course.id = claim(computeCourseBackfillId(scope, course));
+    changed = true;
+  };
+  const courses = schedule.courses;
+  if (courses && typeof courses === 'object' && !Array.isArray(courses)) {
+    for (const [day, list] of Object.entries(courses)) {
+      if (!Array.isArray(list)) continue;
+      for (const course of list) fill(course, `d:${day}`);
+    }
+  }
+  if (Array.isArray(schedule.makeupDays)) {
+    for (const day of schedule.makeupDays) {
+      if (!day || !Array.isArray(day.courses)) continue;
+      for (const course of day.courses) fill(course, `m:${day.date || ''}`);
+    }
+  }
+  return changed;
+}
+
 async function loadSchedule() {
   // 缓存失效检查：外部直接改 data/schedule.json 时 mtime 变化，下次读取重新加载，无需重启。
   let stat = null;
@@ -506,6 +575,15 @@ async function loadSchedule() {
     const data = JSON.parse(content);
     scheduleCache = {...createDefaultSchedule(), ...data, periodSettings: data.periodSettings || JSON.parse(JSON.stringify(defaultPeriods))};
     scheduleCacheMtime = stat ? stat.mtimeMs : null;
+    // 历史数据 id 回填：落盘持久化一次，之后加载命中已回填数据即不再变化（幂等）。
+    // 落盘失败（如只读挂载）不阻塞读取——内存中已是回填结果，下次加载会重试
+    if (ensureCourseIds(scheduleCache)) {
+      try {
+        await saveSchedule(scheduleCache);
+      } catch (persistErr) {
+        console.error('课程 id 回填落盘失败（已保留内存回填结果）:', persistErr.message);
+      }
+    }
     return scheduleCache;
   } catch (err) {
     if (err.code === 'ENOENT') {
@@ -534,6 +612,9 @@ async function loadSchedule() {
 }
 
 async function saveSchedule(data) {
+  // 写入口统一兜底：isValidCourse 不强制 id（旧数据可合法写入），在唯一写出口
+  // 补齐缺 id 课程的确定性 id，保证落盘数据与内存缓存恒有 id（M30）
+  ensureCourseIds(data);
   const tempFile = `${DATA_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   try {
     // 确保目录存在
@@ -1486,7 +1567,7 @@ function createReadonlyApp() {
 }
 
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, slotOfFirstPeriod, slotOfActualStartMinutes, resolveCourseTimeRange, createReadonlyApp, resolveReadonlyListenPort };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, slotOfFirstPeriod, slotOfActualStartMinutes, resolveCourseTimeRange, createReadonlyApp, resolveReadonlyListenPort, ensureCourseIds };
 
 if (require.main === module) {
   const servers = [];

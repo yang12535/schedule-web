@@ -758,4 +758,79 @@ describe('Schedule API', () => {
       expect(result.value).toMatch(/^\d{6}$/);
     });
   });
+
+  describe('历史数据课程 id 回填（M30）', () => {
+    // 旧格式数据：课程对象只有 name/period/location/teacher，没有 id（线上数据实证形态，
+    // 见 finding 20260925-reviewer-front-bug-id）
+    const legacyData = {
+      name: '旧数据班',
+      semesterStart: '2024-03-01',
+      totalPeriods: 2,
+      totalWeeks: 16,
+      periodSettings: [
+        { startTime: '08:00', duration: 45 },
+        { startTime: '08:55', duration: 45 }
+      ],
+      courses: {
+        monday: [{ name: '高数', period: '1-2', location: 'A101', teacher: '张老师' }],
+        tuesday: [{ name: '英语', period: '1' }],
+        wednesday: [],
+        thursday: [],
+        friday: []
+      },
+      announcements: [],
+      makeupDays: [
+        {
+          id: 'md-legacy-1',
+          date: '2024-04-07',
+          name: '清明调休',
+          status: 'confirmed',
+          copyFrom: 'monday',
+          courses: [{ name: '补·高数', period: '1-2' }]
+        }
+      ]
+    };
+    const idsOf = body => [
+      ...Object.values(body.courses).flatMap(list => list.map(c => c.id)),
+      ...body.makeupDays.flatMap(day => day.courses.map(c => c.id))
+    ];
+    const expectAllHaveIds = body => {
+      const ids = idsOf(body);
+      expect(ids).toHaveLength(3); // 2 门周课 + 1 门补课日课程
+      expect(ids.every(id => typeof id === 'string' && id.length > 0)).toBe(true);
+      return ids;
+    };
+
+    it('加载旧格式数据时回填缺 id 课程（含 makeupDays）并持久化，二次加载幂等不再变', async () => {
+      await fs.writeFile(process.env.DATA_FILE, JSON.stringify(legacyData, null, 2));
+
+      const first = await request(app).get('/api/schedule').expect(200);
+      const firstIds = expectAllHaveIds(first.body);
+
+      // 回填结果已落盘持久化
+      const persistedRaw = await fs.readFile(process.env.DATA_FILE, 'utf8');
+      expect(idsOf(JSON.parse(persistedRaw))).toEqual(firstIds);
+
+      // 绕过 mtime 缓存强制二次加载：id 不变，且文件不再被改写（幂等）
+      const stat = await fs.stat(process.env.DATA_FILE);
+      await fs.utimes(process.env.DATA_FILE, stat.atime, new Date(stat.mtimeMs + 2000));
+      const second = await request(app).get('/api/schedule').expect(200);
+      expect(idsOf(second.body)).toEqual(firstIds);
+      expect(await fs.readFile(process.env.DATA_FILE, 'utf8')).toBe(persistedRaw);
+    });
+
+    it('GET /api/schedule 输出的课程必有 id（前端 data-id 依赖的接口契约）', async () => {
+      const res = await request(app).get('/api/schedule').expect(200);
+      expectAllHaveIds(res.body);
+    });
+
+    it('导入无 id 的旧数据后 GET 输出即有 id（写入口统一回填）', async () => {
+      const res = await request(app)
+        .post('/api/import')
+        .send({ password: 'test123', data: legacyData })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+      expectAllHaveIds(res.body.schedule);
+    });
+  });
 });
