@@ -396,6 +396,15 @@ let scheduleCache = null;
 // 缓存对应的数据文件 mtime；只在 mtime 变化时重读磁盘
 let scheduleCacheMtime = null;
 
+// /api/calendar.ics 订阅响应的进程内短 TTL 缓存（review r1 P2-2 裁定方案）：
+// 该接口是未授权公开动态接口，豁免通用限流后（M27 P2#13，防全班 NAT 轮询被 200/15min
+// 配额误伤）需要别的手段压住单源洪峰的 CPU 放大。订阅 URL 固定、无查询参数分桶，
+// 60s TTL 内重复轮询直接命中缓存；任何写操作成功落盘时失效（saveSchedule 是唯一
+// 写出口，见其中 icsCache = null）。缓存响应的 DTSTAMP 最多滞后 TTL 秒——日历客户端
+// 以 UID 判重，不受影响；外部手改数据文件的最坏可见滞后同样不超过 TTL。
+let icsCache = null; // { text: string, expiresAt: number }
+const ICS_CACHE_TTL_MS = 60 * 1000;
+
 app.use(express.json({ limit: '1mb' }));
 
 // 安全响应头
@@ -532,6 +541,8 @@ async function saveSchedule(data) {
     await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
     await fs.rename(tempFile, DATA_FILE);
     scheduleCache = data;
+    // 课表落盘即让 ICS 订阅缓存失效，下一次导出反映最新数据
+    icsCache = null;
     // 记录新 mtime，避免自己保存后被误判为外部修改而立刻重读
     try {
       scheduleCacheMtime = (await fs.stat(DATA_FILE)).mtimeMs;
@@ -874,8 +885,9 @@ function escapeIcsText(text) {
     .replace(/,/g, '\\,')
     .replace(/\r?\n/g, '\\n')
     // RFC 5545 TEXT 只允许 WSP（空格/Tab）以上的可打印字符与 NON-US-ASCII；
-    // 其余 C0 控制符（含裸 \r）与 DEL 直接剥离，避免破坏 content line 结构
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+    // 其余 C0 控制符与 DEL 直接剥离（\r\n 已在上面转义为 \n，落到这里的是裸 \r），
+    // 避免破坏 content line 结构
+    .replace(/[\x00-\x08\x0B-\x0D\x0E-\x1F\x7F]/g, '');
 }
 
 // RFC 5545 §3.1：content line 不应超过 75 octet，超出时用 CRLF + 单个空格折叠。
@@ -1212,13 +1224,17 @@ function buildCalendarIcs(schedule) {
 
 app.get('/api/calendar.ics', async (req, res) => {
   try {
-    const schedule = await loadSchedule();
-    const ics = buildCalendarIcs(schedule);
+    const now = Date.now();
+    if (!icsCache || now >= icsCache.expiresAt) {
+      const schedule = await loadSchedule();
+      icsCache = { text: buildCalendarIcs(schedule), expiresAt: now + ICS_CACHE_TTL_MS };
+    }
     await logToFile('ICS 日历导出');
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Content-Disposition', 'inline; filename="schedule.ics"');
+    // no-cache 保持客户端每次回源校验；短 TTL 缓存只是服务端的生成开销优化
     res.setHeader('Cache-Control', 'no-cache');
-    res.send(ics);
+    res.send(icsCache.text);
   } catch (err) {
     console.error('导出 ICS 失败:', err);
     res.status(500).json({ error: 'Failed to export calendar' });

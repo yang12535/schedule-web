@@ -165,6 +165,36 @@ describe('GET /api/calendar.ics', () => {
     expect(res.text).toContain('SUMMARY:📋 上午：补课·分析化学');
     expect(res.text).toContain('SUMMARY:📋 下午：补课班会'); // 16:30 按实际开始时间归下午时段
   });
+
+  describe('进程内 60s 缓存（review r1 P2-2）', () => {
+    it('TTL 内重复导出命中缓存（响应逐字节相同，含 DTSTAMP）', async () => {
+      const first = await request(app).get('/api/calendar.ics').expect(200);
+      const second = await request(app).get('/api/calendar.ics').expect(200);
+      expect(second.text).toBe(first.text);
+    });
+
+    it('写操作保存成功后缓存立即失效，下次导出反映新数据', async () => {
+      const before = await request(app).get('/api/calendar.ics').expect(200);
+      expect(before.text).not.toContain('缓存失效验证课');
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({
+          password: 'test123',
+          makeupDays: [{
+            id: 'md-cache-invalidate',
+            date: '2026-11-14',
+            name: '',
+            status: 'confirmed',
+            copyFrom: null,
+            courses: [{ name: '缓存失效验证课', period: '1' }]
+          }]
+        })
+        .expect(200);
+      const after = await request(app).get('/api/calendar.ics').expect(200);
+      expect(after.text).toContain('SUMMARY:缓存失效验证课');
+      expect(after.text).not.toBe(before.text);
+    });
+  });
 });
 
 describe('parsePeriodNumbers', () => {
@@ -352,6 +382,15 @@ describe('buildCalendarIcs 健壮性与 RFC 5545 合规', () => {
     });
     expect(ics).toContain('SUMMARY:微积分');
     expect(ics).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/);
+  });
+
+  it('课名中的裸 CR（\\r）同样剥离，不会原样进入 content line（r1 P2-1）', () => {
+    const ics = buildCalendarIcs({
+      ...baseSchedule,
+      courses: { monday: [{ name: 'A\rB', period: '1' }], tuesday: [], wednesday: [], thursday: [], friday: [] }
+    });
+    expect(ics).toContain('SUMMARY:AB');
+    expect(ics.replace(/\r\n/g, '')).not.toContain('\r'); // 除 CRLF 行尾外无裸 CR
   });
 });
 
