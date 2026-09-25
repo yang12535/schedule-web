@@ -18,7 +18,7 @@ process.env.SEMESTER_START = '2026-08-31';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
-const { app, init, buildCalendarIcs, parsePeriodNumbers } = require('../src/server/server');
+const { app, init, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, resolveCourseTimeRange, slotOfFirstPeriod, slotOfActualStartMinutes } = require('../src/server/server');
 
 const seedData = {
   name: 'ICS测试班',
@@ -44,7 +44,30 @@ const seedData = {
       { name: '劳动教育', period: '1', teacher: '测试教师B', location: '正德楼307' }
     ]
   },
-  announcements: []
+  announcements: [],
+  makeupDays: [
+    {
+      id: 'md-confirmed-1',
+      date: '2026-10-10', // 周六，国庆调休上班日
+      name: '国庆节调休',
+      status: 'confirmed',
+      copyFrom: 'friday',
+      courses: [
+        { name: '补课·分析化学', period: '1-2', teacher: '李四', location: 'D404' },
+        { name: '补课班会', period: '1', customStart: '16:30', customEnd: '17:10' }
+      ]
+    },
+    {
+      id: 'md-pending-1',
+      date: '2026-09-20', // 周日，国庆调休上班日，学校尚未通知补哪天的课
+      name: '待通知',
+      status: 'pending',
+      copyFrom: null,
+      courses: [
+        { name: '待定补课不该出现', period: '1' }
+      ]
+    }
+  ]
 };
 
 function countOccurrences(text, needle) {
@@ -113,6 +136,35 @@ describe('GET /api/calendar.ics', () => {
     expect(uids(first.text)).toEqual(uids(second.text));
     expect(uids(first.text)[0]).toMatch(/^UID:sw-[0-9a-f]{20}@schedule-web$/);
   });
+
+  it('confirmed 补课日按 date 直接生成事件，DESCRIPTION 标注补课来源', async () => {
+    const res = await request(app).get('/api/calendar.ics').expect(200);
+    expect(countOccurrences(res.text, 'SUMMARY:补课·分析化学')).toBe(1);
+    expect(res.text).toContain('DTSTART;TZID=Asia/Shanghai:20261010T080000');
+    expect(res.text).toContain('DTEND;TZID=Asia/Shanghai:20261010T094000');
+    expect(res.text).toContain('LOCATION:D404');
+    expect(res.text).toContain('补课·补周五'); // copyFrom=friday 进 DESCRIPTION
+    expect(res.text).toContain('2026-10-10 第1-2节');
+    expect(res.text).toMatch(/^UID:swm-[0-9a-f]{20}@schedule-web$/m); // 补课事件独立 UID 前缀
+  });
+
+  it('补课课程的 customStart/customEnd 优先于节次推导', async () => {
+    const res = await request(app).get('/api/calendar.ics').expect(200);
+    expect(countOccurrences(res.text, 'SUMMARY:补课班会')).toBe(1);
+    expect(res.text).toContain('DTSTART;TZID=Asia/Shanghai:20261010T163000');
+    expect(res.text).toContain('DTEND;TZID=Asia/Shanghai:20261010T171000');
+  });
+
+  it('pending（等待通知）补课日不生成任何事件', async () => {
+    const res = await request(app).get('/api/calendar.ics').expect(200);
+    expect(res.text).not.toContain('待定补课不该出现');
+  });
+
+  it('补课事件同样参与时段汇总（当天单独成组）', async () => {
+    const res = await request(app).get('/api/calendar.ics').expect(200);
+    expect(res.text).toContain('SUMMARY:📋 上午：补课·分析化学');
+    expect(res.text).toContain('SUMMARY:📋 下午：补课班会'); // 16:30 按实际开始时间归下午时段
+  });
 });
 
 describe('parsePeriodNumbers', () => {
@@ -159,5 +211,242 @@ describe('buildCalendarIcs', () => {
     });
     expect(ics).toContain('SUMMARY:课程\\,带逗号\\;分号');
     expect(ics).toContain('LOCATION:A\\\\B');
+  });
+});
+
+describe('foldIcsLine（RFC 5545 §3.1 75 octet 折行）', () => {
+  const unfold = folded => folded.split('\r\n').map((l, i) => (i === 0 ? l : l.slice(1))).join('');
+  const physicalLines = folded => folded.split('\r\n');
+
+  it('不超过 75 字节的行原样返回', () => {
+    expect(foldIcsLine('SUMMARY:短标题')).toBe('SUMMARY:短标题');
+    expect(foldIcsLine('A'.repeat(75))).toBe('A'.repeat(75));
+  });
+
+  it('超长 ASCII 行折叠后每个物理行不超过 75 字节，且可无损展开', () => {
+    const line = `DESCRIPTION:${'x'.repeat(200)}`;
+    const folded = foldIcsLine(line);
+    for (const l of physicalLines(folded)) {
+      expect(Buffer.byteLength(l, 'utf8')).toBeLessThanOrEqual(75);
+    }
+    expect(unfold(folded)).toBe(line);
+  });
+
+  it('多字节字符（中文）按字符边界折叠，不截断 UTF-8 序列', () => {
+    const line = `SUMMARY:${'超'.repeat(40)}`; // 8 + 120 字节
+    const folded = foldIcsLine(line);
+    const lines = physicalLines(folded);
+    expect(lines.length).toBeGreaterThan(1);
+    for (let i = 1; i < lines.length; i++) {
+      expect(lines[i].startsWith(' ')).toBe(true); // 续行以单个空格开头
+    }
+    for (const l of lines) {
+      expect(Buffer.byteLength(l, 'utf8')).toBeLessThanOrEqual(75);
+    }
+    expect(unfold(folded)).toBe(line);
+  });
+});
+
+describe('buildSlotSummaryTitle（汇总标题 60 字截断）', () => {
+  it('不超过 60 字时完整列出全部课名', () => {
+    expect(buildSlotSummaryTitle('上午', ['高等数学', '体育理论'])).toBe('📋 上午：高等数学、体育理论');
+  });
+
+  it('恰好 60 字时不截断', () => {
+    const names = ['A'.repeat(20), 'B'.repeat(20), 'C'.repeat(12)]; // 6 + 20+1+20+1+12 = 60
+    expect(buildSlotSummaryTitle('上午', names)).toBe(`📋 上午：${names.join('、')}`);
+  });
+
+  it('超长时保留完整课名并以「等N节」收尾，总长不超 60 字', () => {
+    const names = ['A'.repeat(20), 'B'.repeat(20), 'C'.repeat(12), 'D'.repeat(5)];
+    const title = buildSlotSummaryTitle('上午', names);
+    expect(title).toBe(`📋 上午：${'A'.repeat(20)}、${'B'.repeat(20)}等2节`);
+    expect(title.length).toBeLessThanOrEqual(60);
+  });
+
+  it('单个课名就超长时退化为「等N节」', () => {
+    expect(buildSlotSummaryTitle('上午', ['X'.repeat(70)])).toBe('📋 上午：等1节');
+  });
+});
+
+describe('resolveCourseTimeRange（与前端 getCourseTimeRange 同一约定）', () => {
+  const settings = [
+    { startTime: '08:00', duration: 45 },
+    { startTime: '08:55', duration: 50 }
+  ];
+
+  it('customStart/customEnd 同时合法且 end>start 时优先', () => {
+    const range = resolveCourseTimeRange({ period: '1', customStart: '16:30', customEnd: '17:10' }, [1], settings);
+    expect(range).toEqual({ startMin: 990, endMin: 1030, custom: true });
+  });
+
+  it('按节次推导：开始=首节 startTime，结束=末节课 startTime + duration', () => {
+    const range = resolveCourseTimeRange({ period: '1-2' }, [1, 2], settings);
+    expect(range).toEqual({ startMin: 480, endMin: 535 + 50, custom: false });
+  });
+
+  it('duration 缺失时回退 45 分钟', () => {
+    const range = resolveCourseTimeRange({ period: '1' }, [1], [{ startTime: '08:00' }]);
+    expect(range).toEqual({ startMin: 480, endMin: 525, custom: false });
+  });
+
+  it('customEnd 不晚于 customStart 时回退节次推导', () => {
+    const range = resolveCourseTimeRange({ period: '1', customStart: '10:00', customEnd: '09:00' }, [1], settings);
+    expect(range).toEqual({ startMin: 480, endMin: 525, custom: false });
+  });
+
+  it('节次超出 periodSettings 范围时返回 null（课程跳过）', () => {
+    expect(resolveCourseTimeRange({ period: '3' }, [3], settings)).toBeNull();
+  });
+
+  it('periodSettings 的 startTime 非法时返回 null，不产生 NaN 时间', () => {
+    expect(resolveCourseTimeRange({ period: '1' }, [1], [{ startTime: 'bad-time', duration: 45 }])).toBeNull();
+  });
+});
+
+describe('buildCalendarIcs 健壮性与 RFC 5545 合规', () => {
+  const baseSchedule = {
+    name: '合规班',
+    semesterStart: '2026-08-31',
+    totalPeriods: 1,
+    totalWeeks: 1,
+    periodSettings: [{ startTime: '08:00', duration: 45 }],
+    courses: { monday: [{ name: '数学', period: '1' }], tuesday: [], wednesday: [], thursday: [], friday: [] }
+  };
+
+  it('DTSTAMP 为 UTC 时间戳，日历骨架属性齐全', () => {
+    const ics = buildCalendarIcs(baseSchedule);
+    expect(ics).toMatch(/^DTSTAMP:\d{8}T\d{6}Z$/m);
+    expect(ics).toContain('PRODID:-//schedule-web//class-schedule//CN');
+    expect(ics).toContain('CALSCALE:GREGORIAN');
+    expect(ics).toContain('TZID:Asia/Shanghai');
+  });
+
+  it('全文仅使用 CRLF 换行，且每个物理行不超过 75 字节', () => {
+    const ics = buildCalendarIcs({
+      ...baseSchedule,
+      courses: { monday: [{ name: '超'.repeat(40), period: '1', location: '弘德楼机房406' }], tuesday: [], wednesday: [], thursday: [], friday: [] }
+    });
+    expect(ics.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/); // 无裸 LF/CR
+    for (const line of ics.split('\r\n')) {
+      expect(Buffer.byteLength(line, 'utf8')).toBeLessThanOrEqual(75);
+    }
+    // 折叠后的 SUMMARY 展开仍还原完整课名
+    const summary = ics.split('\r\n').filter(l => l.startsWith('SUMMARY:超') || l.startsWith(' ')).join('');
+    expect(summary).toContain('SUMMARY:超');
+  });
+
+  it('periodSettings 的 startTime 非法（手工改坏的数据文件）时跳过课程，不输出 NaN 时间', () => {
+    const ics = buildCalendarIcs({
+      ...baseSchedule,
+      periodSettings: [{ startTime: 'bad-time', duration: 45 }]
+    });
+    expect(ics).not.toContain('NaN');
+    expect(ics).not.toContain('BEGIN:VEVENT');
+  });
+
+  it('课名中的 C0 控制字符被剥离（换行仍转义为 \\n）', () => {
+    const ics = buildCalendarIcs({
+      ...baseSchedule,
+      courses: { monday: [{ name: '微\x07积分\x0B\x7F', period: '1' }], tuesday: [], wednesday: [], thursday: [], friday: [] }
+    });
+    expect(ics).toContain('SUMMARY:微积分');
+    expect(ics).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/);
+  });
+});
+
+// 取出包含某个 SUMMARY 的 VEVENT 文本块（汇总事件标题含「📋」前缀，不会误匹配）
+function eventBlockOf(ics, summaryLine) {
+  const block = ics.split('BEGIN:VEVENT').find(b => b.includes(summaryLine));
+  if (!block) throw new Error(`VEVENT not found: ${summaryLine}`);
+  return block;
+}
+
+describe('ICS 字段级细节（M27 测试盲区）', () => {
+  const makeSchedule = courses => ({
+    name: '字段班',
+    semesterStart: '2026-08-31',
+    totalPeriods: 4,
+    totalWeeks: 1,
+    periodSettings: [
+      { startTime: '08:00', duration: 45 },
+      { startTime: '08:55', duration: 45 },
+      { startTime: '10:00', duration: 45 },
+      { startTime: '20:00', duration: 45 }
+    ],
+    courses: { monday: courses, tuesday: [], wednesday: [], thursday: [], friday: [] }
+  });
+
+  it('同一导出内 UID 撞车时追加稳定 -2 后缀，互不覆盖', () => {
+    const dup = { name: '撞车课', period: '1', teacher: '同人', location: 'A101' };
+    const ics = buildCalendarIcs(makeSchedule([dup, { ...dup }]));
+    const uids = ics.split('\r\n').filter(l => l.startsWith('UID:sw-') && !l.startsWith('UID:sw-daily-'));
+    expect(uids).toHaveLength(2);
+    expect(uids[0]).toMatch(/^UID:sw-[0-9a-f]{20}@schedule-web$/);
+    expect(uids[1]).toMatch(/^UID:sw-[0-9a-f]{20}-2@schedule-web$/);
+    expect(uids[0].replace('@schedule-web', '')).toBe(uids[1].replace('-2@schedule-web', ''));
+  });
+
+  it('VALARM 按课间隙自适应：短课间前课下课即弹，长间隙课前 30 分钟', () => {
+    const ics = buildCalendarIcs(makeSchedule([
+      { name: '甲课', period: '1' }, // 08:00-08:45，当天首节 → 课前 30 分钟
+      { name: '乙课', period: '2' }, // 08:55 开始，间隙 10 分钟 → 前课下课即弹
+      { name: '丙课', period: '4' }  // 20:00 开始，长间隙 → 课前 30 分钟
+    ]));
+    expect(eventBlockOf(ics, 'SUMMARY:甲课')).toContain('TRIGGER:-PT30M');
+    expect(eventBlockOf(ics, 'SUMMARY:甲课')).toContain('甲课 30 分钟后开始');
+    expect(eventBlockOf(ics, 'SUMMARY:乙课')).toContain('TRIGGER:-PT10M');
+    expect(eventBlockOf(ics, 'SUMMARY:乙课')).toContain('上一节已下课，接下来：乙课');
+    expect(eventBlockOf(ics, 'SUMMARY:丙课')).toContain('TRIGGER:-PT30M');
+  });
+
+  it('时段汇总事件有独立 sw-daily UID 与 PT0M 闹钟', () => {
+    const ics = buildCalendarIcs(makeSchedule([{ name: '甲课', period: '1' }]));
+    expect(ics).toMatch(/^UID:sw-daily-[0-9a-f]{20}@schedule-web$/m);
+    expect(eventBlockOf(ics, 'SUMMARY:📋 上午：甲课')).toContain('TRIGGER:PT0M');
+  });
+
+  it('首课凌晨开始时汇总事件钳制在当天 00:00，不落到前一天（P2#23）', () => {
+    const ics = buildCalendarIcs({
+      ...makeSchedule([{ name: '凌晨课', period: '1', customStart: '00:20', customEnd: '00:50' }])
+    });
+    const block = eventBlockOf(ics, 'SUMMARY:📋 上午：凌晨课');
+    expect(block).toContain('DTSTART;TZID=Asia/Shanghai:20260831T000000');
+    expect(block).toContain('DTEND;TZID=Asia/Shanghai:20260831T000500');
+    expect(ics).not.toContain('20260830'); // 不跨到前一天
+  });
+
+  it('totalWeeks 超出 30 时按 30 周展开（手改文件 DoS 防护，P2#9）', () => {
+    const ics = buildCalendarIcs({ ...makeSchedule([{ name: '数学', period: '1' }]), totalWeeks: 100000 });
+    expect(countOccurrences(ics, 'SUMMARY:数学')).toBe(29); // 30 周减去国庆假期内的周一 2026-10-05
+  });
+});
+
+describe('时段归属边界（slotOfFirstPeriod / slotOfActualStartMinutes）', () => {
+  it('按节次归属：上午 1-5、下午 6-9、晚上 10 及以后', () => {
+    expect(slotOfFirstPeriod(1)).toBe('morning');
+    expect(slotOfFirstPeriod(5)).toBe('morning');
+    expect(slotOfFirstPeriod(6)).toBe('afternoon');
+    expect(slotOfFirstPeriod(9)).toBe('afternoon');
+    expect(slotOfFirstPeriod(10)).toBe('evening');
+    expect(slotOfFirstPeriod(14)).toBe('evening');
+  });
+
+  it('自定义时间按实际开始时间归属，边界取 periodSettings 第 6/10 节开始时间', () => {
+    const settings = Array.from({ length: 12 }, (_, i) => ({
+      startTime: `${String(7 + i).padStart(2, '0')}:00`, // 第6节 12:00、第10节 16:00
+      duration: 45
+    }));
+    expect(slotOfActualStartMinutes(11 * 60 + 59, settings)).toBe('morning');
+    expect(slotOfActualStartMinutes(12 * 60, settings)).toBe('afternoon');
+    expect(slotOfActualStartMinutes(15 * 60 + 59, settings)).toBe('afternoon');
+    expect(slotOfActualStartMinutes(16 * 60, settings)).toBe('evening');
+  });
+
+  it('periodSettings 缺失时段边界时回退固定钟点（12:00 / 18:00）', () => {
+    const short = [{ startTime: '08:00', duration: 45 }];
+    expect(slotOfActualStartMinutes(11 * 60, short)).toBe('morning');
+    expect(slotOfActualStartMinutes(13 * 60, short)).toBe('afternoon');
+    expect(slotOfActualStartMinutes(19 * 60, short)).toBe('evening');
   });
 });

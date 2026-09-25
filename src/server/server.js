@@ -26,6 +26,18 @@ function generatePassword() {
 
 const AUTO_GENERATE_PASSWORD_VALUE = '__AUTO_GENERATE__';
 
+// 恒定时间密码比较（M27 审计 P2#12）：长度不同也先做一次等长 dummy 比较再拒绝，
+// 避免比较耗随前缀匹配长度变化的时序侧信道
+function passwordEquals(input, expected) {
+  const a = Buffer.from(input === undefined || input === null ? '' : String(input), 'utf8');
+  const b = Buffer.from(String(expected), 'utf8');
+  if (a.length !== b.length) {
+    crypto.timingSafeEqual(a, a);
+    return false;
+  }
+  return crypto.timingSafeEqual(a, b);
+}
+
 function resolveEditPassword(env = process.env) {
   const isSet = Object.prototype.hasOwnProperty.call(env, 'EDIT_PASSWORD');
   if (!isSet || env.EDIT_PASSWORD === AUTO_GENERATE_PASSWORD_VALUE) {
@@ -73,6 +85,12 @@ function isValidPeriodSettings(arr) {
   return true;
 }
 
+// 可选整数字段：缺省（undefined/null）放行，给出时必须是 [min, max] 内的整数
+function isOptionalIntegerInRange(value, min, max) {
+  if (value === undefined || value === null) return true;
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
 function isValidCourse(course) {
   if (!course || typeof course !== 'object') return false;
   if (typeof course.name !== 'string' || !course.name.trim() || course.name.length > 100) return false;
@@ -83,15 +101,15 @@ function isValidCourse(course) {
   // 否则 ICS 导出时会被静默跳过，持久化前直接拒绝。
   if (getMaxPeriodNumber(course.period) === 0) return false;
   if (course.type !== undefined && course.type !== null && typeof course.type !== 'string') return false;
-  if (course.skipWeek !== undefined && course.skipWeek !== null && (!Number.isInteger(course.skipWeek) || course.skipWeek < 1 || course.skipWeek > 30)) return false;
-  if (course.startWeek !== undefined && course.startWeek !== null && (!Number.isInteger(course.startWeek) || course.startWeek < 1 || course.startWeek > 30)) return false;
-  if (course.endWeek !== undefined && course.endWeek !== null && (!Number.isInteger(course.endWeek) || course.endWeek < 1 || course.endWeek > 30)) return false;
-  if (course.startWeek !== undefined && course.startWeek !== null && course.endWeek !== undefined && course.endWeek !== null && course.startWeek > course.endWeek) return false;
+  if (!isOptionalIntegerInRange(course.skipWeek, 1, 30)) return false;
+  if (!isOptionalIntegerInRange(course.startWeek, 1, 30)) return false;
+  if (!isOptionalIntegerInRange(course.endWeek, 1, 30)) return false;
+  if (Number.isInteger(course.startWeek) && Number.isInteger(course.endWeek) && course.startWeek > course.endWeek) return false;
   if (course.weekType !== undefined && course.weekType !== null && !['all', 'odd', 'even'].includes(course.weekType)) return false;
-  if (course.customStart !== undefined && course.customStart !== null && parseCustomTimeHM(course.customStart) === null) return false;
-  if (course.customEnd !== undefined && course.customEnd !== null && parseCustomTimeHM(course.customEnd) === null) return false;
   const customStartMin = parseCustomTimeHM(course.customStart);
   const customEndMin = parseCustomTimeHM(course.customEnd);
+  if (course.customStart !== undefined && course.customStart !== null && customStartMin === null) return false;
+  if (course.customEnd !== undefined && course.customEnd !== null && customEndMin === null) return false;
   if (customStartMin !== null && customEndMin !== null && customEndMin <= customStartMin) return false;
   return true;
 }
@@ -171,17 +189,40 @@ function getMaxPeriodNumber(period) {
   return nums.length ? nums[nums.length - 1] : 0;
 }
 
+function getMaxPeriodInCourseList(list) {
+  if (!Array.isArray(list)) return 0;
+  let max = 0;
+  for (const course of list) {
+    const period = getMaxPeriodNumber(course && course.period);
+    if (period > max) max = period;
+  }
+  return max;
+}
+
 function getMaxCoursePeriod(courses) {
   if (!courses || typeof courses !== 'object') return 0;
   let max = 0;
   for (const list of Object.values(courses)) {
-    if (!Array.isArray(list)) continue;
-    for (const course of list) {
-      const period = getMaxPeriodNumber(course && course.period);
-      if (period > max) max = period;
-    }
+    const period = getMaxPeriodInCourseList(list);
+    if (period > max) max = period;
   }
   return max;
+}
+
+function getMaxMakeupCoursePeriod(makeupDays) {
+  if (!Array.isArray(makeupDays)) return 0;
+  let max = 0;
+  for (const day of makeupDays) {
+    const period = getMaxPeriodInCourseList(day && day.courses);
+    if (period > max) max = period;
+  }
+  return max;
+}
+
+// totalPeriods 缺省/非法时回退 periodSettings 长度（与 makeup-days 端点既有口径一致）
+function getScheduleTotalPeriods(schedule) {
+  if (Number.isInteger(schedule.totalPeriods)) return schedule.totalPeriods;
+  return Array.isArray(schedule.periodSettings) ? schedule.periodSettings.length : 0;
 }
 
 function isValidAnnouncement(a) {
@@ -267,7 +308,8 @@ async function logToFile(message) {
     try {
       await fs.mkdir(LOG_DIR, { recursive: true });
       const date = new Date();
-      const dateStr = date.toISOString().split('T')[0];
+      // 文件名与行内时间戳统一用本地日期，避免早 8 点前日志写进前一天文件（M27 审计 P2#11）
+      const dateStr = formatLocalDate(date);
       const logFile = path.join(LOG_DIR, `schedule-${dateStr}.log`);
       const timeStr = date.toLocaleString('zh-CN');
       const logLine = `[${timeStr}] ${safeMessage}\n`;
@@ -398,8 +440,13 @@ app.get('/healthz', async (req, res) => {
 const publicPath = process.env.PUBLIC_PATH || path.join(__dirname, 'public');
 app.use(express.static(publicPath));
 
-// 通用速率限制
-app.use(generalRateLimit);
+// 通用速率限制。/api/calendar.ics 是日历订阅轮询入口，全班常共享同一 NAT 出口，
+// 与交互式 API 共用 200/15min/IP 配额会误伤订阅客户端，予以豁免（M27 审计 P2#13）；
+// 事件量已被 totalWeeks clamp（≤30 周）封顶，单次导出开销有界。
+app.use((req, res, next) => {
+  if (req.path === '/api/calendar.ics') return next();
+  return generalRateLimit(req, res, next);
+});
 
 function sanitizeUrl(url) {
   return String(url).replace(/([?&])(password|token|secret|api_key)=([^&]*)/gi, '$1$2=***');
@@ -512,7 +559,7 @@ app.get('/api/schedule', async (req, res) => {
 app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
   try {
     const {password, courses} = req.body;
-    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
       await logToFile(`密码错误尝试 - 课程更新`);
       return res.status(403).json({error:'密码错误'});
     }
@@ -521,9 +568,14 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
     if (!isValidCourses(courses)) {
       return res.status(400).json({error:'Invalid courses data'});
     }
-    
+
     await withSaveLock(async () => {
       const schedule = await loadSchedule();
+      // 与 makeup-days 端点同款防护（M27 审计 P1#1）：节次超出 totalPeriods 的课程
+      // 在 ICS 导出时查不到节次配置会被静默跳过、前端显示为无时间课卡，保存时直接拒绝
+      if (getMaxCoursePeriod(courses) > getScheduleTotalPeriods(schedule)) {
+        throw new HttpError(400, 'Course period exceeds totalPeriods');
+      }
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       newSchedule.courses = courses;
       newSchedule.updatedAt = new Date().toISOString();
@@ -532,6 +584,9 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
     await logToFile(`课程数据已更新`);
     res.json({success:true});
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({error: err.message});
+    }
     console.error('保存课程失败:', err);
     res.status(500).json({error:'Failed to save'});
   }
@@ -541,7 +596,7 @@ app.put('/api/schedule/courses', strictRateLimit, async (req, res) => {
 app.put('/api/schedule/makeup-days', strictRateLimit, async (req, res) => {
   try {
     const {password, makeupDays} = req.body;
-    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
       await logToFile(`密码错误尝试 - 调休补课日更新`);
       return res.status(403).json({error:'密码错误'});
     }
@@ -555,15 +610,8 @@ app.put('/api/schedule/makeup-days', strictRateLimit, async (req, res) => {
       const schedule = await loadSchedule();
       // 节次可解析还不够：超出 periodSettings 节次数的补课课程在 ICS 导出时
       // 会因查不到对应节次配置被静默跳过，保存时直接拒绝
-      const totalPeriodsNum = Number.isInteger(schedule.totalPeriods)
-        ? schedule.totalPeriods
-        : (Array.isArray(schedule.periodSettings) ? schedule.periodSettings.length : 0);
-      for (const day of makeupDays) {
-        for (const course of day.courses) {
-          if (getMaxPeriodNumber(course.period) > totalPeriodsNum) {
-            throw new HttpError(400, 'Course period exceeds totalPeriods');
-          }
-        }
+      if (getMaxMakeupCoursePeriod(makeupDays) > getScheduleTotalPeriods(schedule)) {
+        throw new HttpError(400, 'Course period exceeds totalPeriods');
       }
       const newSchedule = JSON.parse(JSON.stringify(schedule));
       newSchedule.makeupDays = makeupDays;
@@ -584,7 +632,7 @@ app.put('/api/schedule/makeup-days', strictRateLimit, async (req, res) => {
 app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
   try {
     const {password, name, description, semesterStart, totalPeriods, totalWeeks, periodSettings} = req.body;
-    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
       await logToFile(`密码错误尝试 - 设置更新`);
       return res.status(403).json({error:'密码错误'});
     }
@@ -610,10 +658,22 @@ app.put('/api/schedule/settings', strictRateLimit, async (req, res) => {
         }
         newSchedule.semesterStart = semesterStart;
       }
-      if (Number.isInteger(totalPeriods) && totalPeriods >= 1 && totalPeriods <= 20) newSchedule.totalPeriods = totalPeriods;
+      // totalPeriods 非法（非 1-20 整数）时维持原值，与历史行为一致（静默忽略而非 400）
+      newSchedule.totalPeriods = newTotalPeriods;
       if (Number.isInteger(totalWeeks) && totalWeeks >= 1 && totalWeeks <= 30) newSchedule.totalWeeks = totalWeeks;
       if (totalPeriods !== undefined && !hasPeriodSettings) {
         newSchedule.periodSettings = newSchedule.periodSettings.slice(0, newSchedule.totalPeriods);
+      }
+      // M27 审计 P1#2：缩小 totalPeriods 会让节次超出的既有课程/补课变孤儿
+      // （ICS 静默丢、前端显示无时间课卡），缩小前扫描，超出则拒绝
+      if (newSchedule.totalPeriods < getScheduleTotalPeriods(schedule)) {
+        const maxExistingPeriod = Math.max(
+          getMaxCoursePeriod(newSchedule.courses),
+          getMaxMakeupCoursePeriod(newSchedule.makeupDays)
+        );
+        if (maxExistingPeriod > newSchedule.totalPeriods) {
+          throw new HttpError(400, 'Course period exceeds totalPeriods');
+        }
       }
       if (newSchedule.periodSettings.length !== newSchedule.totalPeriods) {
         throw new HttpError(400, 'periodSettings length does not match totalPeriods');
@@ -640,7 +700,7 @@ app.get('/api/ui-config', (req, res) => {
 app.post('/api/verify', strictRateLimit, async (req, res) => {
   try {
     const {password} = req.body;
-    const valid = !EDIT_PASSWORD || password === EDIT_PASSWORD;
+    const valid = !EDIT_PASSWORD || passwordEquals(password, EDIT_PASSWORD);
     if (!valid) await logToFile(`密码验证失败`);
     res.json({valid, requirePassword:!!EDIT_PASSWORD, name:CLASS_NAME, description:CLASS_DESC});
   } catch (err) {
@@ -689,7 +749,7 @@ app.get('/api/announcements', strictRateLimit, requireHeaderAuth, async (req, re
 app.post('/api/announcements', strictRateLimit, async (req, res) => {
   try {
     const {password, announcement} = req.body;
-    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
       await logToFile(`密码错误尝试 - 公告更新`);
       return res.status(403).json({error:'密码错误'});
     }
@@ -748,7 +808,7 @@ app.post('/api/announcements', strictRateLimit, async (req, res) => {
 app.delete('/api/announcements/:id', strictRateLimit, async (req, res) => {
   try {
     const {password} = req.body;
-    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
       await logToFile(`密码错误尝试 - 公告删除`);
       return res.status(403).json({error:'密码错误'});
     }
@@ -812,7 +872,10 @@ function escapeIcsText(text) {
     .replace(/\\/g, '\\\\')
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
-    .replace(/\r?\n/g, '\\n');
+    .replace(/\r?\n/g, '\\n')
+    // RFC 5545 TEXT 只允许 WSP（空格/Tab）以上的可打印字符与 NON-US-ASCII；
+    // 其余 C0 控制符（含裸 \r）与 DEL 直接剥离，避免破坏 content line 结构
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
 // RFC 5545 §3.1：content line 不应超过 75 octet，超出时用 CRLF + 单个空格折叠。
@@ -924,12 +987,49 @@ function buildSlotSummaryTitle(label, names) {
   return prefix + names.slice(0, keptCount).join('、') + `等${names.length - keptCount}节`;
 }
 
+// 课程起止时间（当天分钟数）：customStart/customEnd 优先，否则按节次查 periodSettings
+// （开始 = 首节 startTime，结束 = 末节课 startTime + duration）。与前端
+// getCourseTimeRange 同一约定：节次超出 periodSettings 范围或 startTime 非法时
+// 返回 null，调用方跳过该课程——保证 ICS 里不会出现 Invalid Date/NaN 的 VEVENT。
+function resolveCourseTimeRange(course, periods, periodSettings) {
+  const custom = getCustomCourseTimes(course);
+  if (custom) return { startMin: custom.startMin, endMin: custom.endMin, custom: true };
+  const first = periodSettings[periods[0] - 1];
+  const last = periodSettings[periods[periods.length - 1] - 1];
+  if (!first || !last) return null;
+  const startMin = parseCustomTimeHM(first.startTime);
+  const lastStartMin = parseCustomTimeHM(last.startTime);
+  if (startMin === null || lastStartMin === null) return null;
+  return { startMin, endMin: lastStartMin + (Number(last.duration) || 45), custom: false };
+}
+
+// 课程 VEVENT 的属性行（不含 VALARM 与 END:VEVENT——闹钟在全天事件收齐后按课间隙
+// 统一计算，END 行也在那时补上，见 buildCalendarIcs 的 dayGroups 逻辑）
+function buildCourseEventLines({ uid, dtstamp, start, end, name, location, descLines }) {
+  const lines = ['BEGIN:VEVENT'];
+  lines.push(`UID:${uid}`);
+  lines.push(`DTSTAMP:${dtstamp}`);
+  lines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(start)}`);
+  lines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(end)}`);
+  lines.push(`SUMMARY:${escapeIcsText(name)}`);
+  if (location) lines.push(`LOCATION:${escapeIcsText(location)}`);
+  lines.push(`DESCRIPTION:${escapeIcsText(descLines.join('\n'))}`);
+  return lines;
+}
+
+// 时段汇总 DESCRIPTION 里的单行：「课名 HH:MM-HH:MM @地点」（地点可省）
+function buildSlotDescLine(name, start, end, location) {
+  return `${name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${location ? ` @${location}` : ''}`;
+}
+
 // 按 semesterStart + 周次范围把课程展开成本学期全部上课日的 VEVENT。
 // 节假日（holidays.js 内置表）当天的事件跳过。
 // 调休补课日（schedule.makeupDays）不走周次展开：confirmed 的补课日按 date 直接生成
 // 事件（DESCRIPTION 标注「补课」及 copyFrom），pending（等待学校通知）的跳过。
 function buildCalendarIcs(schedule) {
-  const totalWeeksNum = Number.isInteger(schedule.totalWeeks) ? schedule.totalWeeks : 16;
+  // 手改数据文件可写入任意 totalWeeks（loadSchedule 无 schema 校验），clamp 到写入路径的
+  // 上限 30 周，防止未授权的 /api/calendar.ics 被当成 DoS 放大器（M27 审计 P2#9）
+  const totalWeeksNum = Math.min(Number.isInteger(schedule.totalWeeks) ? schedule.totalWeeks : 16, 30);
   const periodSettings = Array.isArray(schedule.periodSettings) ? schedule.periodSettings : [];
   const dtstamp = formatIcsUtcDateTime(new Date());
   const lines = [
@@ -968,24 +1068,12 @@ function buildCalendarIcs(schedule) {
         if (Number.isInteger(course.skipWeek) && course.skipWeek === week) continue;
         const periods = parsePeriodNumbers(course.period);
         if (periods.length === 0) continue;
-        const custom = getCustomCourseTimes(course);
-        let start, end;
-        if (custom) {
-          // 自定义时间优先：直接用 customStart/customEnd，不查 periodSettings
-          start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, Math.floor(custom.startMin / 60), custom.startMin % 60);
-          if (!start) continue;
-          end = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, Math.floor(custom.endMin / 60), custom.endMin % 60);
-        } else {
-          const first = periodSettings[periods[0] - 1];
-          const last = periodSettings[periods[periods.length - 1] - 1];
-          if (!first || !last) continue;
-          const [sh, sm] = first.startTime.split(':').map(Number);
-          const [eh, em] = last.startTime.split(':').map(Number);
-          start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, sh, sm);
-          if (!start) continue;
-          const endBase = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, eh, em);
-          end = new Date(endBase.getTime() + (Number(last.duration) || 45) * 60000);
-        }
+        const range = resolveCourseTimeRange(course, periods, periodSettings);
+        if (!range) continue;
+        // endMin 跨午夜时 getAcademicDate 的 setHours 会顺延到次日，与挂钟时间语义一致
+        const start = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, Math.floor(range.startMin / 60), range.startMin % 60);
+        if (!start) continue;
+        const end = ScheduleDateUtils.getAcademicDate(schedule.semesterStart, week, dayIndex, Math.floor(range.endMin / 60), range.endMin % 60);
         const holiday = ScheduleHolidays.getHolidayInfo(start);
         if (holiday && holiday.type === 'holiday') continue;
         const uid = assignUniqueUid(`sw-${crypto.createHash('sha1').update([
@@ -994,24 +1082,15 @@ function buildCalendarIcs(schedule) {
         const desc = [];
         if (course.teacher) desc.push(`教师：${course.teacher}`);
         desc.push(`第${week}周 ${ICS_DAY_NAMES[day]} 第${course.period}节`);
-        const eventLines = ['BEGIN:VEVENT'];
-        eventLines.push(`UID:${uid}`);
-        eventLines.push(`DTSTAMP:${dtstamp}`);
-        eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(start)}`);
-        eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(end)}`);
-        eventLines.push(`SUMMARY:${escapeIcsText(course.name)}`);
-        if (course.location) eventLines.push(`LOCATION:${escapeIcsText(course.location)}`);
-        eventLines.push(`DESCRIPTION:${escapeIcsText(desc.join('\n'))}`);
-        // VALARM 与 END:VEVENT 在全天事件收集完毕后按课间隙统一生成（见下方 dayGroups 逻辑）
         events.push({
           dayKey: `w${week}-${day}`,
           start: start.getTime(),
           end: end.getTime(),
           // 自定义时间生效时按实际开始时间归时段，否则按名义首节次
-          slot: custom ? slotOfActualStartMinutes(custom.startMin, periodSettings) : slotOfFirstPeriod(periods[0]),
+          slot: range.custom ? slotOfActualStartMinutes(range.startMin, periodSettings) : slotOfFirstPeriod(periods[0]),
           name: course.name,
-          descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
-          lines: eventLines
+          descLine: buildSlotDescLine(course.name, start, end, course.location),
+          lines: buildCourseEventLines({ uid, dtstamp, start, end, name: course.name, location: course.location, descLines: desc })
         });
       }
     });
@@ -1026,23 +1105,13 @@ function buildCalendarIcs(schedule) {
     for (const course of dayCourses) {
       const periods = parsePeriodNumbers(course.period);
       if (periods.length === 0) continue;
-      const custom = getCustomCourseTimes(course);
+      const range = resolveCourseTimeRange(course, periods, periodSettings);
+      if (!range) continue;
+      // 自定义时间生效时直接用 customStart/customEnd（range.custom），不查 periodSettings
       const start = new Date(baseDate.getTime());
+      start.setHours(Math.floor(range.startMin / 60), range.startMin % 60, 0, 0);
       const end = new Date(baseDate.getTime());
-      if (custom) {
-        // 自定义时间优先：直接用 customStart/customEnd，不查 periodSettings、不加 duration
-        start.setHours(Math.floor(custom.startMin / 60), custom.startMin % 60, 0, 0);
-        end.setHours(Math.floor(custom.endMin / 60), custom.endMin % 60, 0, 0);
-      } else {
-        const first = periodSettings[periods[0] - 1];
-        const last = periodSettings[periods[periods.length - 1] - 1];
-        if (!first || !last) continue;
-        const [sh, sm] = first.startTime.split(':').map(Number);
-        const [eh, em] = last.startTime.split(':').map(Number);
-        start.setHours(sh, sm, 0, 0);
-        end.setHours(eh, em, 0, 0);
-        end.setTime(end.getTime() + (Number(last.duration) || 45) * 60000);
-      }
+      end.setHours(Math.floor(range.endMin / 60), range.endMin % 60, 0, 0);
       // UID 稳定：由补课日期 + 课程信息哈希而成，同一补课日重复导出不变；
       // 同一导出内撞车时由 assignUniqueUid 追加序号，无冲突时与旧算法一致
       const uid = assignUniqueUid(`swm-${crypto.createHash('sha1').update([
@@ -1052,24 +1121,15 @@ function buildCalendarIcs(schedule) {
       if (course.teacher) desc.push(`教师：${course.teacher}`);
       desc.push(day.copyFrom ? `补课·补${ICS_DAY_NAMES[day.copyFrom]}` : '补课');
       desc.push(`${day.date} 第${course.period}节`);
-      const eventLines = ['BEGIN:VEVENT'];
-      eventLines.push(`UID:${uid}`);
-      eventLines.push(`DTSTAMP:${dtstamp}`);
-      eventLines.push(`DTSTART;TZID=Asia/Shanghai:${formatIcsLocalDateTime(start)}`);
-      eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(end)}`);
-      eventLines.push(`SUMMARY:${escapeIcsText(course.name)}`);
-      if (course.location) eventLines.push(`LOCATION:${escapeIcsText(course.location)}`);
-      eventLines.push(`DESCRIPTION:${escapeIcsText(desc.join('\n'))}`);
-      // VALARM 与 END:VEVENT 在全天事件收集完毕后按课间隙统一生成（见下方 dayGroups 逻辑）
       events.push({
         dayKey: `m-${day.date}`,
         start: start.getTime(),
         end: end.getTime(),
         // 自定义时间生效时按实际开始时间归时段，否则按名义首节次
-        slot: custom ? slotOfActualStartMinutes(custom.startMin, periodSettings) : slotOfFirstPeriod(periods[0]),
+        slot: range.custom ? slotOfActualStartMinutes(range.startMin, periodSettings) : slotOfFirstPeriod(periods[0]),
         name: course.name,
-        descLine: `${course.name} ${pad2(start.getHours())}:${pad2(start.getMinutes())}-${pad2(end.getHours())}:${pad2(end.getMinutes())}${course.location ? ` @${course.location}` : ''}`,
-        lines: eventLines
+        descLine: buildSlotDescLine(course.name, start, end, course.location),
+        lines: buildCourseEventLines({ uid, dtstamp, start, end, name: course.name, location: course.location, descLines: desc })
       });
     }
   }
@@ -1099,8 +1159,8 @@ function buildCalendarIcs(schedule) {
   // 时段汇总提醒：按「天 × 时段」分组，每组有课的时段额外生成一个独立的汇总 VEVENT。
   // 很多日历客户端（Google 日历等）一个 VEVENT 只认一条 VALARM，所以不能像课程事件那样
   // 把汇总提醒作为第二条闹钟塞进首课事件，必须独立成事件；课程事件仍只有一条自适应 VALARM。
-  // 汇总事件 DTSTART = 该时段当天最早课的上课时间 - 60 分钟，DTEND = DTSTART + 5 分钟，
-  // 闹钟 TRIGGER:PT0M（事件开始时提醒）。
+  // 汇总事件 DTSTART = 该时段当天最早课的上课时间 - 60 分钟（凌晨首课钳制到当天 00:00），
+  // DTEND = DTSTART + 5 分钟，闹钟 TRIGGER:PT0M（事件开始时提醒）。
   const slotGroups = new Map(); // `${dayKey}|${slot}` -> events[]
   for (const ev of events) {
     if (!ev.slot) continue;
@@ -1112,7 +1172,11 @@ function buildCalendarIcs(schedule) {
     group.sort((a, b) => a.start - b.start);
     const slot = key.split('|').pop();
     const label = ICS_SLOT_LABELS[slot];
-    const summaryStart = new Date(group[0].start - 60 * 60000);
+    // 首课在凌晨 1 点前开始时，提前 60 分钟会把汇总事件落到前一天；
+    // 钳制到当天 00:00（M27 审计 P2#23 边角）
+    const dayStart = new Date(group[0].start);
+    dayStart.setHours(0, 0, 0, 0);
+    const summaryStart = new Date(Math.max(group[0].start - 60 * 60000, dayStart.getTime()));
     const summaryEnd = new Date(summaryStart.getTime() + 5 * 60000);
     const dateStr = formatIcsLocalDateTime(new Date(group[0].start)).slice(0, 8);
     // UID 稳定：由日期 + 时段 + 课程名列表哈希而成，重复导出不变，且不与课程事件冲突
@@ -1206,7 +1270,7 @@ function migrateOldData(data) {
 app.post('/api/import', strictRateLimit, async (req, res) => {
   try {
     const {password, data} = req.body;
-    if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+    if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
       await logToFile(`密码错误尝试 - 数据导入`);
       return res.status(403).json({error:'密码错误'});
     }
@@ -1229,7 +1293,11 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
       const importedTotalPeriods = Number.isInteger(migratedData.totalPeriods) && migratedData.totalPeriods >= 1 && migratedData.totalPeriods <= 20 ? migratedData.totalPeriods : 0;
       const hasPeriodSettings = migratedData.periodSettings !== undefined && migratedData.periodSettings !== null;
       const periodSettingsLength = hasPeriodSettings && Array.isArray(migratedData.periodSettings) ? migratedData.periodSettings.length : 0;
-      const maxCoursePeriod = getMaxCoursePeriod(migratedData.courses);
+      // M27 审计 P1#3：补课日课程一并纳入节次扫描，否则导入后 ICS 会静默丢超节次补课
+      const maxCoursePeriod = Math.max(
+        getMaxCoursePeriod(migratedData.courses),
+        getMaxMakeupCoursePeriod(migratedData.makeupDays)
+      );
       const newTotalPeriods = Math.max(importedTotalPeriods || newSchedule.totalPeriods, periodSettingsLength, maxCoursePeriod);
       if (!Number.isInteger(newTotalPeriods) || newTotalPeriods < 1 || newTotalPeriods > 20) {
         throw new HttpError(400, 'Invalid totalPeriods');
@@ -1291,7 +1359,7 @@ app.post('/api/import', strictRateLimit, async (req, res) => {
 function requireHeaderAuth(req, res, next) {
   const rawPassword = req.headers['x-password'];
   const password = Array.isArray(rawPassword) ? rawPassword[0] : (rawPassword || '');
-  if (EDIT_PASSWORD && password !== EDIT_PASSWORD) {
+  if (EDIT_PASSWORD && !passwordEquals(password, EDIT_PASSWORD)) {
     return res.status(403).json({error:'Access denied'});
   }
   next();
@@ -1351,11 +1419,21 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large' || err.status === 413) {
     return res.status(413).json({error:'Request entity too large'});
   }
+  // body-parser JSON 解析失败是客户端错误，应返回 400 而非 500（M27 审计 P2#8）
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({error:'Malformed JSON in request body'});
+  }
   console.error('未处理的错误:', err);
   res.status(500).json({error:'Internal server error'});
 });
 
 async function init() {
+  // ICS 时间字段与日志时间戳都按服务器本地时区生成、以 Asia/Shanghai 语义解释；
+  // 裸机部署时区不符会整体偏移，启动即告警（Docker 镜像已设 TZ=Asia/Shanghai）（M27 审计 P2#10）
+  const serverTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (process.env.NODE_ENV !== 'test' && serverTimeZone !== 'Asia/Shanghai') {
+    console.warn(`当前服务器时区为 ${serverTimeZone || '未知'}，课表相关时间按 Asia/Shanghai 口径生成；裸机部署请设置 TZ=Asia/Shanghai`);
+  }
   await fs.mkdir(path.dirname(DATA_FILE), {recursive:true});
   await fs.mkdir(LOG_DIR, {recursive:true});
   await checkStorageWritable();
@@ -1392,11 +1470,12 @@ function createReadonlyApp() {
 }
 
 // 导出供测试使用
-module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, slotOfFirstPeriod, slotOfActualStartMinutes, createReadonlyApp, resolveReadonlyListenPort };
+module.exports = { app, init, resolveEditPassword, checkStorageWritable, createDefaultSchedule, buildCalendarIcs, buildSlotSummaryTitle, parsePeriodNumbers, foldIcsLine, isValidMakeupDays, slotOfFirstPeriod, slotOfActualStartMinutes, resolveCourseTimeRange, createReadonlyApp, resolveReadonlyListenPort };
 
 if (require.main === module) {
+  const servers = [];
   init().then(() => {
-    app.listen(PORT, () => {
+    servers.push(app.listen(PORT, () => {
       const banner = `
 ========================================
 📚 班级课表服务已启动
@@ -1419,30 +1498,30 @@ ${EDIT_PASSWORD ? '🔒 编辑密码: 已设置' : '🔓 编辑模式: 无需密
         }
       }
       logToFile(`服务启动 - 班级: ${CLASS_NAME}, 密码状态: ${EDIT_PASSWORD ? '已设置' : '无'}`);
-    });
+    }));
     const readonlyListenPort = resolveReadonlyListenPort(READONLY_PORT, PORT);
     if (readonlyListenPort) {
-      createReadonlyApp().listen(readonlyListenPort, () => {
+      servers.push(createReadonlyApp().listen(readonlyListenPort, () => {
         console.log(`🔒 公网只读入口已启动: http://localhost:${readonlyListenPort}（写接口关闭）`);
         logToFile(`只读入口启动 - 端口: ${readonlyListenPort}`);
-      });
+      }));
     }
   }).catch(err => {
     console.error('服务启动失败:', err);
     process.exit(1);
   });
 
-  process.on('SIGTERM', async () => {
-    console.log('收到 SIGTERM，等待日志写入完成...');
+  // M27 审计 P2#22：先关闭 listener（停止接收新请求、等在途请求结束），再刷日志退出，
+  // 避免 docker stop 时直接砍断在途请求
+  async function gracefulShutdown(signal) {
+    console.log(`收到 ${signal}，停止接收新请求，等待在途请求与日志写入完成...`);
     if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval);
+    await Promise.all(servers.map(s => new Promise(resolve => s.close(() => resolve()))));
     await Promise.all(pendingLogs);
     process.exit(0);
-  });
+  }
 
-  process.on('SIGINT', async () => {
-    console.log('收到 SIGINT，等待日志写入完成...');
-    if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval);
-    await Promise.all(pendingLogs);
-    process.exit(0);
-  });
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }

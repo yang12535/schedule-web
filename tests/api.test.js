@@ -255,6 +255,163 @@ describe('Schedule API', () => {
     });
   });
 
+  describe('PUT /api/schedule/makeup-days', () => {
+    const validMakeupDays = [
+      {
+        id: 'md-1',
+        date: '2026-10-10',
+        name: '国庆节调休',
+        status: 'confirmed',
+        copyFrom: 'friday',
+        courses: [{ name: '补课·分析化学', period: '1-2', teacher: '李四', location: 'D404' }]
+      }
+    ];
+
+    it('应能整体替换补课日并回读一致', async () => {
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({ password: 'test123', makeupDays: validMakeupDays })
+        .expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.makeupDays).toHaveLength(1);
+      expect(res.body.makeupDays[0]).toMatchObject({ id: 'md-1', date: '2026-10-10', status: 'confirmed' });
+    });
+
+    it('未授权应返回 403', async () => {
+      await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({ password: 'wrong', makeupDays: validMakeupDays })
+        .expect(403);
+    });
+
+    it.each([
+      ['日期重复', [
+        { id: 'a', date: '2026-10-10', status: 'confirmed', courses: [] },
+        { id: 'b', date: '2026-10-10', status: 'pending', courses: [] }
+      ]],
+      ['id 重复', [
+        { id: 'a', date: '2026-10-10', status: 'confirmed', courses: [] },
+        { id: 'a', date: '2026-10-11', status: 'pending', courses: [] }
+      ]],
+      ['非法 status', [
+        { id: 'a', date: '2026-10-10', status: 'maybe', courses: [] }
+      ]],
+      ['非法日历日期', [
+        { id: 'a', date: '2026-02-30', status: 'confirmed', courses: [] }
+      ]],
+      ['课程节次不可解析', [
+        { id: 'a', date: '2026-10-10', status: 'confirmed', courses: [{ name: '坏课', period: 'abc' }] }
+      ]]
+    ])('应拒绝非法补课日数据：%s', async (_name, makeupDays) => {
+      const res = await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({ password: 'test123', makeupDays })
+        .expect(400);
+      expect(res.body.error).toBe('Invalid makeupDays data');
+    });
+
+    it('补课课程节次超过 totalPeriods 时应返回 400（避免 ICS 导出时静默跳过）', async () => {
+      // 当前数据文件 totalPeriods=12（前一个 settings 用例写入）
+      const res = await request(app)
+        .put('/api/schedule/makeup-days')
+        .send({
+          password: 'test123',
+          makeupDays: [{ id: 'a', date: '2026-10-10', status: 'confirmed', courses: [{ name: '超节次补课', period: '13-14' }] }]
+        })
+        .expect(400);
+      expect(res.body.error).toBe('Course period exceeds totalPeriods');
+    });
+  });
+
+  describe('课程节次与 totalPeriods 一致性防护（M27 审计 P1#1/#2/#3）', () => {
+    it('PUT /api/schedule/courses 应拒绝节次超出 totalPeriods 的课程（否则 ICS 静默丢课）', async () => {
+      const res = await request(app)
+        .put('/api/schedule/courses')
+        .send({
+          password: 'test123',
+          courses: {
+            monday: [{ id: 'over-1', name: '超节次课', period: '13' }],
+            tuesday: [], wednesday: [], thursday: [], friday: []
+          }
+        })
+        .expect(400);
+      expect(res.body.error).toBe('Course period exceeds totalPeriods');
+
+      // 数据未被写入
+      const after = await request(app).get('/api/schedule').expect(200);
+      expect(after.body.courses.monday.some(c => c.name === '超节次课')).toBe(false);
+    });
+
+    it('settings 缩小 totalPeriods 产生孤儿课程时应返回 400', async () => {
+      // 先写入 period=12 的课程（当前 totalPeriods=12）
+      await request(app)
+        .put('/api/schedule/courses')
+        .send({
+          password: 'test123',
+          courses: {
+            monday: [{ id: 'p12', name: '第十二节课', period: '12' }],
+            tuesday: [], wednesday: [], thursday: [], friday: []
+          }
+        })
+        .expect(200);
+
+      const res = await request(app)
+        .put('/api/schedule/settings')
+        .send({ password: 'test123', totalPeriods: 8 })
+        .expect(400);
+      expect(res.body.error).toBe('Course period exceeds totalPeriods');
+
+      // 缩小被拒后 totalPeriods 维持 12，name 等非节次更新不受影响
+      const after = await request(app).get('/api/schedule').expect(200);
+      expect(after.body.totalPeriods).toBe(12);
+      await request(app)
+        .put('/api/schedule/settings')
+        .send({ password: 'test123', name: 'TestClass' })
+        .expect(200);
+    });
+
+    it('import 应按补课日课程节次一并扩充 totalPeriods（P1#3）', async () => {
+      const payload = {
+        password: 'test123',
+        data: {
+          name: '含超节次补课课表',
+          totalPeriods: 12,
+          courses: { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [] },
+          periodSettings: Array.from({ length: 12 }, (_, i) => ({
+            startTime: `${String(8 + i).padStart(2, '0')}:00`,
+            duration: 45
+          })),
+          makeupDays: [{
+            id: 'md-over',
+            date: '2026-10-10',
+            status: 'confirmed',
+            copyFrom: 'friday',
+            courses: [{ name: '第十三节补课', period: '13' }]
+          }]
+        }
+      };
+
+      await request(app).post('/api/import').send(payload).expect(200);
+
+      const res = await request(app).get('/api/schedule').expect(200);
+      expect(res.body.totalPeriods).toBe(13);
+      expect(res.body.periodSettings).toHaveLength(13);
+      expect(res.body.makeupDays[0].courses[0].period).toBe('13');
+    });
+  });
+
+  describe('请求体解析（M27 审计 P2#8）', () => {
+    it('malformed JSON 请求体应返回 400 而非 500', async () => {
+      const res = await request(app)
+        .post('/api/verify')
+        .set('Content-Type', 'application/json')
+        .send('{"password": broken')
+        .expect(400);
+      expect(res.body.error).toMatch(/Malformed JSON/i);
+    });
+  });
+
   describe('GET /api/export', () => {
     it('应导出 JSON 文件，且 Content-Disposition 包含 RFC 5987 filename* 和 ASCII fallback', async () => {
       const res = await request(app)

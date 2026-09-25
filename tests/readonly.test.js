@@ -19,7 +19,7 @@ process.env.ICP_NUMBER = '皖ICP备2025105642号';
 process.env.PUBLIC_PATH = path.join(__dirname, '..', 'src', 'public');
 
 const request = require('supertest');
-const { app, init, createReadonlyApp } = require('../src/server/server');
+const { app, init, createReadonlyApp, resolveReadonlyListenPort } = require('../src/server/server');
 
 describe('公网只读入口', () => {
   let readonlyApp;
@@ -80,5 +80,20 @@ describe('公网只读入口', () => {
       .send({ password: 'test123', announcement: { title: '主入口写入', content: 'ok' } })
       .expect(200);
     expect(res.body.success).toBe(true);
+  });
+});
+
+describe('resolveReadonlyListenPort', () => {
+  it('未配置/超范围/与主端口相同时返回 0（跳过只读监听），合法时返回端口', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(resolveReadonlyListenPort(0, 3000)).toBe(0);
+      expect(resolveReadonlyListenPort('abc', 3000)).toBe(0);
+      expect(resolveReadonlyListenPort(70000, 3000)).toBe(0);
+      expect(resolveReadonlyListenPort(3000, 3000)).toBe(0); // 与主端口相同会 EADDRINUSE
+      expect(resolveReadonlyListenPort(3001, 3000)).toBe(3001);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
