@@ -24,6 +24,8 @@ services:
       - EDIT_PASSWORD=${EDIT_PASSWORD-__AUTO_GENERATE__}
       - PRINT_EDIT_PASSWORD=${PRINT_EDIT_PASSWORD:-true}
       - SEMESTER_START=${SEMESTER_START:-2026-03-01}
+      # 📋 汇总事件 VALARM 默认关闭（HyperOS 超级岛刷屏对策）；设为 true 恢复旧行为
+      - ICS_SLOT_SUMMARY_ALARM=${ICS_SLOT_SUMMARY_ALARM:-false}
       - DATA_FILE=/data/schedule.json
       - LOG_DIR=/data/logs
       - PUBLIC_PATH=/app/public

@@ -439,10 +439,15 @@ describe('ICS 字段级细节（M27 测试盲区）', () => {
     expect(eventBlockOf(ics, 'SUMMARY:丙课')).toContain('TRIGGER:-PT30M');
   });
 
-  it('时段汇总事件有独立 sw-daily UID 与 PT0M 闹钟', () => {
-    const ics = buildCalendarIcs(makeSchedule([{ name: '甲课', period: '1' }]));
-    expect(ics).toMatch(/^UID:sw-daily-[0-9a-f]{20}@schedule-web$/m);
-    expect(eventBlockOf(ics, 'SUMMARY:📋 上午：甲课')).toContain('TRIGGER:PT0M');
+  it('汇总闹钟开关开启时：时段汇总事件有独立 sw-daily UID 与 PT0M 闹钟', () => {
+    process.env.ICS_SLOT_SUMMARY_ALARM = 'true';
+    try {
+      const ics = buildCalendarIcs(makeSchedule([{ name: '甲课', period: '1' }]));
+      expect(ics).toMatch(/^UID:sw-daily-[0-9a-f]{20}@schedule-web$/m);
+      expect(eventBlockOf(ics, 'SUMMARY:📋 上午：甲课')).toContain('TRIGGER:PT0M');
+    } finally {
+      delete process.env.ICS_SLOT_SUMMARY_ALARM;
+    }
   });
 
   it('首课凌晨开始时汇总事件钳制在当天 00:00，不落到前一天（P2#23）', () => {
@@ -458,6 +463,109 @@ describe('ICS 字段级细节（M27 测试盲区）', () => {
   it('totalWeeks 超出 30 时按 30 周展开（手改文件 DoS 防护，P2#9）', () => {
     const ics = buildCalendarIcs({ ...makeSchedule([{ name: '数学', period: '1' }]), totalWeeks: 100000 });
     expect(countOccurrences(ics, 'SUMMARY:数学')).toBe(29); // 30 周减去国庆假期内的周一 2026-10-05
+  });
+});
+
+// M31：ICS_SLOT_SUMMARY_ALARM 控制 📋 时段汇总事件是否输出 VALARM（默认 false 剥离，
+// 治 HyperOS 超级岛重复刷屏）；单节课/补课事件的自适应 VALARM 与全部事件 UID 两态不变。
+describe('ICS_SLOT_SUMMARY_ALARM（📋 汇总事件闹钟开关）', () => {
+  const alarmSchedule = () => ({
+    name: '开关班',
+    semesterStart: '2026-08-31',
+    totalPeriods: 4,
+    totalWeeks: 1,
+    periodSettings: [
+      { startTime: '08:00', duration: 45 },
+      { startTime: '08:55', duration: 45 },
+      { startTime: '10:00', duration: 45 },
+      { startTime: '20:00', duration: 45 }
+    ],
+    courses: {
+      monday: [
+        { name: '甲课', period: '1' }, // 08:00，当天首节 → -PT30M
+        { name: '乙课', period: '2' }  // 08:55，间隙 10 分钟 → -PT10M
+      ],
+      tuesday: [], wednesday: [], thursday: [], friday: []
+    },
+    makeupDays: [{
+      id: 'md-alarm-1',
+      date: '2026-10-10',
+      name: '调休',
+      status: 'confirmed',
+      copyFrom: 'monday',
+      courses: [{ name: '补课丙', period: '1' }]
+    }]
+  });
+
+  // 临时设置/清除开关 env 并在结束后还原（jest --runInBand 单进程，安全）
+  const withAlarmSwitch = (value, fn) => {
+    const prev = process.env.ICS_SLOT_SUMMARY_ALARM;
+    if (value === undefined) delete process.env.ICS_SLOT_SUMMARY_ALARM;
+    else process.env.ICS_SLOT_SUMMARY_ALARM = value;
+    try {
+      return fn();
+    } finally {
+      if (prev === undefined) delete process.env.ICS_SLOT_SUMMARY_ALARM;
+      else process.env.ICS_SLOT_SUMMARY_ALARM = prev;
+    }
+  };
+
+  const uidsOf = text => text.split('\r\n').filter(l => l.startsWith('UID:')).sort();
+
+  // 归一化：剥掉 DTSTAMP 与 📋 汇总事件内的 VALARM 块，用于两态输出逐字节对比
+  //（本组用例课名短，SUMMARY/VALARM DESCRIPTION 均不触发 75 字节折行）
+  const normalize = text => {
+    const out = [];
+    let inSummary = false;
+    let inValarm = false;
+    for (const line of text.split('\r\n')) {
+      if (line === 'BEGIN:VEVENT') inSummary = false;
+      if (line.startsWith('SUMMARY:📋')) inSummary = true;
+      if (line.startsWith('DTSTAMP:')) continue;
+      if (inSummary && line === 'BEGIN:VALARM') { inValarm = true; continue; }
+      if (inValarm) {
+        if (line === 'END:VALARM') inValarm = false;
+        continue;
+      }
+      out.push(line);
+    }
+    return out.join('\r\n');
+  };
+
+  it('默认（未设置）剥离汇总事件 VALARM：汇总事件无闹钟，单节课与补课事件的自适应 VALARM 完整保留', () => {
+    const ics = withAlarmSwitch(undefined, () => buildCalendarIcs(alarmSchedule()));
+    expect(ics).not.toContain('TRIGGER:PT0M');
+    for (const summary of ['SUMMARY:📋 上午：甲课、乙课', 'SUMMARY:📋 上午：补课丙']) {
+      expect(eventBlockOf(ics, summary)).not.toContain('BEGIN:VALARM');
+    }
+    // 余下的 VALARM 恰好等于课程/补课事件数（2 节周课 + 1 节补课），汇总事件不占闹钟
+    expect(countOccurrences(ics, 'BEGIN:VALARM')).toBe(3);
+    expect(eventBlockOf(ics, 'SUMMARY:甲课')).toContain('TRIGGER:-PT30M');
+    expect(eventBlockOf(ics, 'SUMMARY:乙课')).toContain('TRIGGER:-PT10M');
+    expect(eventBlockOf(ics, 'SUMMARY:补课丙')).toContain('TRIGGER:-PT30M');
+    // 显式 false 与未设置行为一致（仅 'true' 开启）
+    expect(normalize(withAlarmSwitch('false', () => buildCalendarIcs(alarmSchedule())))).toBe(normalize(ics));
+  });
+
+  it('开关两态下全部事件 UID 集合全等（VALARM 不参与 UID 哈希，汇总事件本身仍生成）', () => {
+    const off = withAlarmSwitch(undefined, () => buildCalendarIcs(alarmSchedule()));
+    const on = withAlarmSwitch('true', () => buildCalendarIcs(alarmSchedule()));
+    expect(uidsOf(on)).toEqual(uidsOf(off));
+    expect(uidsOf(off)).toHaveLength(5); // 2 周课 + 1 补课 + 2 个 📋 汇总
+    expect(uidsOf(off).filter(u => u.startsWith('UID:sw-daily-'))).toHaveLength(2);
+  });
+
+  it('开关 true 时与默认态输出的唯一差异是汇总事件的 VALARM 块（DTSTAMP 除外逐字节一致）', () => {
+    const off = withAlarmSwitch(undefined, () => buildCalendarIcs(alarmSchedule()));
+    const on = withAlarmSwitch('true', () => buildCalendarIcs(alarmSchedule()));
+    // 剥离「汇总事件 VALARM + DTSTAMP」后两态逐字节相同 → 开关不触碰其余任何输出
+    expect(normalize(on)).toBe(normalize(off));
+    // 开启后汇总事件恢复旧版完整 PT0M 闹钟（与现状逐字节一致的行为钉死）
+    expect(countOccurrences(on, 'BEGIN:VALARM')).toBe(5); // 3 课程事件 + 2 汇总事件
+    const block = eventBlockOf(on, 'SUMMARY:📋 上午：甲课、乙课');
+    for (const line of ['BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:PT0M', 'DESCRIPTION:📋 上午：甲课、乙课', 'END:VALARM']) {
+      expect(block).toContain(line);
+    }
   });
 });
 

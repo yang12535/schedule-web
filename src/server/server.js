@@ -1256,7 +1256,13 @@ function buildCalendarIcs(schedule) {
   // 很多日历客户端（Google 日历等）一个 VEVENT 只认一条 VALARM，所以不能像课程事件那样
   // 把汇总提醒作为第二条闹钟塞进首课事件，必须独立成事件；课程事件仍只有一条自适应 VALARM。
   // 汇总事件 DTSTART = 该时段当天最早课的上课时间 - 60 分钟（凌晨首课钳制到当天 00:00），
-  // DTEND = DTSTART + 5 分钟，闹钟 TRIGGER:PT0M（事件开始时提醒）。
+  // DTEND = DTSTART + 5 分钟。
+  // 汇总事件的 VALARM（TRIGGER:PT0M，事件开始时提醒）默认剥离：HyperOS 超级岛 updatable=false，
+  // 订阅日历每次重同步复触发提醒时岛只新建不更新，一个日程叠 N 个岛，汇总事件（每天三发）是
+  // 主要弹药；ICS_SLOT_SUMMARY_ALARM=true 恢复 PT0M 旧行为（输出与旧版逐字节一致）。
+  // 调用时读取（与 PRINT_EDIT_PASSWORD 同一风格），方便测试切换两态；生产环境 env 进程级固定，
+  // 60s ICS 缓存无需考虑开关运行期变更。
+  const slotSummaryAlarm = process.env.ICS_SLOT_SUMMARY_ALARM === 'true';
   const slotGroups = new Map(); // `${dayKey}|${slot}` -> events[]
   for (const ev of events) {
     if (!ev.slot) continue;
@@ -1292,12 +1298,14 @@ function buildCalendarIcs(schedule) {
     eventLines.push(`DTEND;TZID=Asia/Shanghai:${formatIcsLocalDateTime(summaryEnd)}`);
     eventLines.push(`SUMMARY:${escapeIcsText(title)}`);
     eventLines.push(`DESCRIPTION:${escapeIcsText(group.map(e => e.descLine).join('\n'))}`);
-    eventLines.push('BEGIN:VALARM');
-    eventLines.push('ACTION:DISPLAY');
-    eventLines.push('TRIGGER:PT0M');
-    // 推送通知只展示标题，VALARM 的 DESCRIPTION 与 SUMMARY 保持同一串带课名文本
-    eventLines.push(`DESCRIPTION:${escapeIcsText(title)}`);
-    eventLines.push('END:VALARM');
+    if (slotSummaryAlarm) {
+      eventLines.push('BEGIN:VALARM');
+      eventLines.push('ACTION:DISPLAY');
+      eventLines.push('TRIGGER:PT0M');
+      // 推送通知只展示标题，VALARM 的 DESCRIPTION 与 SUMMARY 保持同一串带课名文本
+      eventLines.push(`DESCRIPTION:${escapeIcsText(title)}`);
+      eventLines.push('END:VALARM');
+    }
     eventLines.push('END:VEVENT');
     lines.push(...eventLines);
   }
