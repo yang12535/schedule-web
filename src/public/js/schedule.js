@@ -199,15 +199,16 @@
       // 修复：处理空值
       if (!p || typeof p !== 'string') return [];
       p = p.replace(/[第节]/g, '').trim();
-      if (p.includes('-')) { 
+      // 修复：仅接受正整数，"1.5"、"0"、"-1" 等非法值直接丢弃，避免 periodSettings[n-1] 取到 undefined
+      if (p.includes('-')) {
         const parts = p.split('-').map(Number);
-        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[0] <= parts[1]) {
+        if (parts.length === 2 && Number.isInteger(parts[0]) && parts[0] > 0 && Number.isInteger(parts[1]) && parts[1] > 0 && parts[0] <= parts[1]) {
           return Array.from({length:parts[1]-parts[0]+1},(_,i)=>parts[0]+i);
         }
       }
-      if (p.includes(',')) return p.split(',').map(Number).filter(n => !isNaN(n) && n > 0);
-      const n = +p; 
-      return !isNaN(n) && n > 0 ? [n] : [];
+      if (p.includes(',')) return p.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
+      const n = +p;
+      return Number.isInteger(n) && n > 0 ? [n] : [];
     }
 
     function formatPeriod(p) {
