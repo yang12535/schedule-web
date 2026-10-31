@@ -281,15 +281,15 @@ function createDefaultSchedule() {
 
 let scheduleCache = null;
 
-app.use(express.json({ limit: '1mb' }));
-
-// 安全响应头
+// 安全响应头（需注册在 express.json 之前，保证 413 等请求体解析错误的响应也带安全头）
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
+
+app.use(express.json({ limit: '1mb' }));
 
 async function checkStorageWritable(dataFile = DATA_FILE) {
   const dataDir = path.dirname(dataFile);
